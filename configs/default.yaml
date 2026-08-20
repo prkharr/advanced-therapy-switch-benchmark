@@ -1,0 +1,167 @@
+project:
+  name: advanced_therapy_switch_benchmark
+  random_seed: 42
+  output_dir: outputs
+  artifact_dir: artifacts
+
+data:
+  source: synthetic              # synthetic | files
+  input_dir: data/raw
+  file_format: parquet           # parquet | csv; used when source=files
+  persist_generated_data: false
+  synthetic:
+    n_patients: 5000
+    n_providers: 350
+    start_date: "2021-01-01"
+    end_date: "2025-12-31"
+    target_prevalence: 0.08
+    signal_strength: 0.75
+    noise_scale: 1.0
+
+timeline:
+  observation_window_days: 365
+  prediction_window_days: 90
+  minimum_history_days: 365
+  minimum_followup_days: 90
+  index_date_strategy: conventional_claim_anchor
+  index_date_start: "2022-01-01"
+  index_date_end: "2025-09-30"
+
+therapy_mapping:
+  conventional:
+    - CONV_A
+    - CONV_B
+    - CONV_C
+    - GENERIC_D
+  advanced:
+    - ADV_A
+    - ADV_B
+    - ADV_C
+
+cohort:
+  require_conventional_on_index: true
+  exclude_prior_advanced: true
+  disease_diagnosis_prefixes: [DX1, DX2, DX3]
+
+features:
+  rolling_windows_days: [30, 60, 90, 180, 365]
+  include_geography: true
+  missing_recency_value_days: 730
+  safe_ratio_epsilon: 1.0
+  sequence:
+    max_length: 128
+    min_events: 2
+    vocab_min_frequency: 1
+    include_provider_specialty: true
+
+splitting:
+  experiments: [stratified, temporal]
+  primary_experiment: temporal
+  validation_fraction: 0.15
+  test_fraction: 0.20
+  temporal_gap_days: 0
+
+models:
+  naive_baseline:
+    enabled: true
+  logistic_regression:
+    enabled: true
+    C: 1.0
+    max_iter: 1000
+    class_weight: balanced
+  random_forest:
+    enabled: true
+    n_estimators: 350
+    max_depth: 12
+    min_samples_leaf: 5
+    class_weight: balanced_subsample
+  xgboost:
+    enabled: true
+    n_estimators: 500
+    max_depth: 5
+    learning_rate: 0.04
+    subsample: 0.8
+    colsample_bytree: 0.8
+  lightgbm:
+    enabled: true
+    n_estimators: 500
+    num_leaves: 31
+    learning_rate: 0.04
+  catboost:
+    enabled: true
+    iterations: 500
+    depth: 6
+    learning_rate: 0.04
+  mlp:
+    enabled: true
+    hidden_dims: [128, 64]
+    dropout: 0.25
+    batch_size: 128
+    max_epochs: 80
+    patience: 10
+    learning_rate: 0.001
+    losses: [bce, focal]
+  lstm:
+    enabled: true
+    hidden_size: 64
+    num_layers: 1
+  gru:
+    enabled: true
+    hidden_size: 64
+    num_layers: 1
+  bilstm:
+    enabled: true
+    hidden_size: 48
+    num_layers: 1
+  transformer:
+    enabled: true
+    d_model: 64
+    nhead: 4
+    num_layers: 2
+    dim_feedforward: 128
+  sequence_training:
+    batch_size: 128
+    max_epochs: 60
+    patience: 8
+    learning_rate: 0.001
+
+tuning:
+  enabled: false
+  engine: auto                  # auto | optuna | randomized_search
+  n_trials: 25
+  scoring: average_precision
+  n_jobs: -1
+
+evaluation:
+  top_fractions: [0.01, 0.05, 0.10, 0.20, 0.30]
+  threshold_strategy: max_f1    # max_f1 | target_recall | fixed
+  fixed_threshold: 0.5
+  target_recall: 0.70
+  bootstrap_iterations: 1000
+  confidence_level: 0.95
+  calibration_bins: 10
+  calibrators: [none, sigmoid, isotonic]
+  select_on: pr_auc
+
+hcp:
+  attribution_rule: most_recent_relevant_prescriber
+  relevant_specialties: [rheumatology, dermatology, gastroenterology]
+  high_propensity_threshold_percentile: 90
+  opportunity_score:
+    expected_switchers_weight: 0.60
+    high_propensity_patients_weight: 0.25
+    eligible_patients_weight: 0.15
+
+visualizations:
+  enabled: true
+  dpi: 140
+  formats: [png]
+
+explainability:
+  enabled: true
+  prefer_shap: true
+  max_samples: 1000
+  permutation_repeats: 5
+
+recommendation:
+  material_pr_auc_gain: 0.01

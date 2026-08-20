@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "advanced-therapy-switch-benchmark"
+version = "0.1.0"
+description = "Leakage-safe classical ML and longitudinal deep-learning benchmark for advanced-therapy switch propensity."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+authors = [{name = "Claims Analytics Team"}]
+dependencies = [
+  "joblib>=1.2",
+  "matplotlib>=3.6",
+  "numpy>=1.23",
+  "pandas>=1.5",
+  "PyYAML>=6.0",
+  "scikit-learn>=1.2",
+  "seaborn>=0.12",
+  "tabulate>=0.9",
+]
+
+[project.optional-dependencies]
+boosting = [
+  "xgboost>=1.7",
+  "lightgbm>=3.3",
+  "catboost>=1.2",
+]
+deep-learning = ["torch>=2.0"]
+optimization = ["optuna>=3.0"]
+explainability = ["shap>=0.42"]
+parquet = ["pyarrow>=12.0"]
+all = [
+  "xgboost>=1.7",
+  "lightgbm>=3.3",
+  "catboost>=1.2",
+  "torch>=2.0",
+  "optuna>=3.0",
+  "shap>=0.42",
+  "pyarrow>=12.0",
+]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.4",
+]
+
+[project.scripts]
+therapy-switch = "therapy_switch.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

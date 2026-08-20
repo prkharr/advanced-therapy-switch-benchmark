@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+
+# Generated datasets and trained-model artifacts can contain sensitive data.
+data/raw/
+data/interim/
+data/processed/
+artifacts/*
+!artifacts/.gitkeep
+
+# Generated benchmark outputs are reproducible and should be reviewed before commit.
+outputs/*
+!outputs/.gitkeep
