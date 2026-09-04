@@ -14,6 +14,7 @@ Run from the repository root:
 from __future__ import annotations
 
 import copy
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -94,6 +95,9 @@ def main() -> None:
         print(f"\nEligible patients: {len(result.cohort):,}")
         print(f"Positive-label rate: {result.cohort['label'].mean():.2%}")
         print(f"Temporary benchmark files: {experiment.output_dir}")
+
+        # Close the pipeline file handler before Windows removes the temporary folder.
+        logging.shutdown()
 
 
 if __name__ == "__main__":
