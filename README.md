@@ -4,6 +4,13 @@ A reproducible benchmarking framework for asking a deliberately neutral question
 can longitudinal deep learning materially improve advanced-therapy switch
 prediction over strong classical claims models?
 
+For a short summary of the confirmed client workflow and proposed deep-learning
+evaluation, see the
+[Word project brief](docs/NT1_Advanced_Therapy_Current_Findings_and_DL_Plan.docx)
+or its [editable Markdown source](docs/current_project_findings_and_dl_plan.md).
+The focused [LightGBM-versus-GRU test](examples/test_lightgbm_vs_gru.py) shows
+how to run the first comparison on one leakage-safe temporal cohort.
+
 The project supports synthetic claims for development and canonicalized real
 claims later. It keeps two comparisons separate:
 
