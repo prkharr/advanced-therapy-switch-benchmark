@@ -15,6 +15,7 @@ delivery:
   adapter: therapy_switch.delivery.adapters:load_raw
   output_dir: ../outputs/field_delivery
   artifact_dir: ../artifacts/field_delivery
+  synthetic_csv_dir: ../data/synthetic/raw
   model:
     trainer: therapy_switch.delivery.model_plugins:fit_recipe
     recipe: field_model.json

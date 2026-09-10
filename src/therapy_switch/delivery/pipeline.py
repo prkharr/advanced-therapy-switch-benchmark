@@ -118,7 +118,7 @@ def load_delivery_config(path, *, overrides=None):
         raise ValueError("Invalid HCP tier or minimum-patient settings")
     # Every delivery-config path is relative to that config file, independent of cwd.
     for owner, keys in [
-        (delivery, ["output_dir", "artifact_dir", "model_artifact"]),
+        (delivery, ["output_dir", "artifact_dir", "model_artifact", "synthetic_csv_dir"]),
         (delivery.get("model", {}), ["recipe"]),
         (delivery.get("prepared", {}), ["training_dir", "scoring_dir"]),
     ]:
@@ -242,8 +242,11 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
 
     if mode not in {"train-score", "score"}:
         raise ValueError("Mode must be train-score or score")
+    config = copy.deepcopy(config)
     settings = config["delivery"]
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8]
+    if config["data"]["source"] == "synthetic" and settings.get("synthetic_csv_dir"):
+        settings["synthetic_csv_dir"] = str(Path(settings["synthetic_csv_dir"]) / run_id)
     output = Path(settings["output_dir"]) / run_id
     artifacts = Path(settings["artifact_dir"]) / run_id
     output.mkdir(parents=True, exist_ok=False)
@@ -368,6 +371,7 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
             "html_report": str((output / "client_report.html").resolve()),
             "model_artifact": str(model_path.resolve()),
             "manifest": str((artifacts / "run_manifest.json").resolve()),
+            "raw_csv_dir": inputs.provenance.get("raw_csv_dir"),
         }
     except Exception as exc:
         manifest.update(status="FAILED", error=f"{type(exc).__name__}: {exc}")

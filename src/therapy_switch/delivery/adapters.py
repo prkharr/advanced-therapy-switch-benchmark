@@ -48,7 +48,15 @@ def _raw_tables(config, session):
 
 def load_raw(config, *, include_training, expected_features=None, session=None):
     """Read seven raw tables once, then build mature training and live scoring batches."""
-    canonical = canonicalize_raw_tables(_raw_tables(config, session), config)
+    raw = _raw_tables(config, session)
+    raw_csv_dir = None
+    if config["data"]["source"] == "synthetic" and config["delivery"].get("synthetic_csv_dir"):
+        directory = Path(config["delivery"]["synthetic_csv_dir"])
+        directory.mkdir(parents=True, exist_ok=False)
+        for name, frame in raw.items():
+            frame.to_csv(directory / f"{name}.csv", index=False)
+        raw_csv_dir = str(directory.resolve())
+    canonical = canonicalize_raw_tables(raw, config)
     date = pd.Timestamp(config["delivery"]["scoring_date"])
     if date > pd.Timestamp(config["data"]["as_of_date"]):
         raise ValueError("Scoring date exceeds the extract's as-of date")
@@ -83,6 +91,7 @@ def load_raw(config, *, include_training, expected_features=None, session=None):
         training,
         {
             "source": config["data"]["source"],
+            "raw_csv_dir": raw_csv_dir,
             "raw_counts": {name: len(frame) for name, frame in canonical.items()},
             "raw_hashes": {name: _table_hash(frame) for name, frame in canonical.items()},
             "excluded_patient_counts": pd.Series([row["reason"] for row in exclusions], dtype=str)

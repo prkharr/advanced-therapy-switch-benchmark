@@ -15,6 +15,8 @@ python run_pipeline.py --config configs/delivery_demo.yaml
 
 The default generates 1,200 synthetic patients and 100 synthetic HCPs, with an assessment date of 2024-12-01. It uses CPU training and requires no warehouse, external checkpoint, visualization server or browser automation package. Raw generation and feature engineering account for most runtime.
 
+The demo also saves all seven generated raw tables as CSV files in `data/synthetic/raw/RUN_ID/`: patients, medical_claims, pharmacy_claims, providers, plans, enrollment and therapy_mapping. The completion JSON prints their absolute directory as `raw_csv_dir`, and the run manifest records it in input provenance. Each run has its own directory, so earlier extracts are preserved. These generated files are ignored by Git. Change `delivery.synthetic_csv_dir` to relocate them (relative to the delivery YAML), or remove that setting to disable saving. This option only exports synthetic data; file and Snowflake sources do not create raw CSV copies.
+
 Equivalent installed command:
 
 ~~~sh
