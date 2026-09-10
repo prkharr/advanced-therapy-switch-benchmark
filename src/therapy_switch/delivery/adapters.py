@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -31,6 +32,9 @@ def _raw_tables(config, session):
     if source == "synthetic":
         return generate_synthetic_claims(config)
     if source == "files":
+        manifest = Path(config["data"]["input_dir"]) / "export_manifest.json"
+        if manifest.exists() and json.loads(manifest.read_text())["status"] != "COMPLETED":
+            raise ValueError("Raw export is incomplete or failed; use a completed extract")
         return load_claims_directory(config)
     if source == "snowflake_raw":
         from therapy_switch.data.snowflake_adapter import SnowflakeAdapter

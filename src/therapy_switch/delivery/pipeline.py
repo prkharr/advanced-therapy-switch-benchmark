@@ -389,6 +389,7 @@ def main(argv=None):
     parser.add_argument("--model-artifact")
     parser.add_argument("--model-recipe")
     parser.add_argument("--output-dir")
+    parser.add_argument("--raw-dir", help="Read the seven canonical CSV files from this folder")
     args = parser.parse_args(argv)
     overrides = {}
     if args.model_recipe:
@@ -396,6 +397,10 @@ def main(argv=None):
     if args.output_dir:
         overrides["output_dir"] = str(Path(args.output_dir).resolve())
     config = load_delivery_config(args.config, overrides=overrides)
+    if args.raw_dir:
+        config["data"].update(
+            source="files", input_dir=str(Path(args.raw_dir).resolve()), file_format="csv"
+        )
     result = run_delivery(config, mode=args.mode, model_artifact=args.model_artifact)
     print(json.dumps(result, indent=2))
     return 0

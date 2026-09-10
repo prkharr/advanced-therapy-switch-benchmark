@@ -8,6 +8,8 @@ Seven canonical source tables produce repeated patient snapshots, wide features 
 
 ## Raw data to field-ready HCP outputs
 
+The [implementation workbook](docs/implementation_review/Project_data_features_and_analysis.xlsx) lists dataset decisions, NDC/ICD handling, features, analysis evidence and remaining dependencies. The [raw-folder workflow](docs/raw_folder_workflow.md) explains how to map the seven [SQL extraction templates](sql/raw_extract), export Snowflake data to CSV, and run the same pipeline with `--raw-dir`. Actual source mappings must be completed before extraction; no real-data performance is claimed.
+
 Run the modular delivery pipeline with:
 
 ~~~sh
