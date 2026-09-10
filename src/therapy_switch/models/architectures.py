@@ -82,138 +82,171 @@ if TORCH_AVAILABLE:
         def forward(self, values: "torch.Tensor") -> "torch.Tensor":
             return self.network(values).squeeze(-1)
 
+    class ResidualTabularMLP(nn.Module):
+        """Nonlinear correction around a frozen training-fitted linear logit."""
+
+        def __init__(self, input_dim, width=64, blocks=2, dropout=0.1):
+            super().__init__()
+            self.linear = nn.Linear(input_dim, 1)
+            self.linear.requires_grad_(False)
+            layers = []
+            previous = input_dim
+            for _ in range(blocks):
+                layers.extend([nn.Linear(previous, width), nn.GELU(), nn.Dropout(dropout)])
+                previous = width
+            output = nn.Linear(previous, 1)
+            nn.init.zeros_(output.weight)
+            nn.init.zeros_(output.bias)
+            layers.append(output)
+            self.correction = nn.Sequential(*layers)
+
+        def forward(self, values):
+            return (self.linear(values) + self.correction(values)).unsqueeze(1)
+
+    class EventEmbedding(nn.Module):
+        def __init__(self, input_dim, d_model, categorical_sizes=()):
+            super().__init__()
+            self.count = len(categorical_sizes)
+            self.embeddings = nn.ModuleList(
+                [nn.Embedding(size, 8, padding_idx=0) for size in categorical_sizes]
+            )
+            self.projection = nn.Linear(8 * self.count + input_dim - self.count + 1, d_model)
+
+        def forward(self, values, times):
+            pieces = [
+                embedding(values[:, :, i].long()) for i, embedding in enumerate(self.embeddings)
+            ]
+            numerical = values[:, :, self.count :]
+            if self.count:
+                numerical = torch.log1p(numerical.clamp_min(0)) / 6
+            pieces.extend([numerical, torch.log1p(times.clamp_min(0)).unsqueeze(-1) / 6])
+            return self.projection(torch.cat(pieces, dim=-1))
+
     class RecurrentSequenceClassifier(nn.Module):
         def __init__(
             self,
-            input_dim: int,
-            cell: str = "lstm",
-            hidden_size: int = 48,
-            num_layers: int = 1,
-            dropout: float = 0.2,
-            bidirectional: bool = False,
-        ) -> None:
+            input_dim,
+            cell="lstm",
+            hidden_size=48,
+            num_layers=1,
+            dropout=0.2,
+            bidirectional=False,
+            categorical_sizes=(),
+        ):
             super().__init__()
-            if cell not in {"lstm", "gru"}:
-                raise ValueError("cell must be 'lstm' or 'gru'")
-            recurrent_class = nn.LSTM if cell == "lstm" else nn.GRU
-            # Elapsed time is concatenated as an explicit temporal feature.
+            self.event_embedding = EventEmbedding(input_dim, hidden_size, categorical_sizes)
+            recurrent_class = nn.GRU if cell == "gru" else nn.LSTM
             self.recurrent = recurrent_class(
-                input_size=input_dim + 1,
-                hidden_size=hidden_size,
+                hidden_size,
+                hidden_size,
                 num_layers=num_layers,
                 batch_first=True,
-                dropout=dropout if num_layers > 1 else 0.0,
+                dropout=dropout if num_layers > 1 else 0,
                 bidirectional=bidirectional,
             )
-            output_size = hidden_size * (2 if bidirectional else 1)
-            self.head = nn.Sequential(
-                nn.LayerNorm(output_size),
-                nn.Dropout(dropout),
-                nn.Linear(output_size, 1),
-            )
+            self.output_size = hidden_size * (2 if bidirectional else 1)
             self.bidirectional = bidirectional
-            self.num_layers = num_layers
+            self.head = nn.Sequential(
+                nn.LayerNorm(self.output_size), nn.Dropout(dropout), nn.Linear(self.output_size, 1)
+            )
 
-        def forward(
-            self,
-            values: "torch.Tensor",
-            mask: "torch.Tensor",
-            times: "torch.Tensor",
-        ) -> "torch.Tensor":
-            elapsed = torch.log1p(torch.clamp(times, min=0.0)).unsqueeze(-1)
-            sequence = torch.cat([values, elapsed], dim=-1)
-            lengths = mask.sum(dim=1).to(dtype=torch.long).cpu()
+        def encode(self, values, mask, times):
+            sequence = self.event_embedding(values, times)
+            sequence = sequence.masked_fill(~mask.unsqueeze(-1), 0)
+            lengths = mask.sum(1).clamp_min(1).long().cpu()
             packed = nn.utils.rnn.pack_padded_sequence(
-                sequence,
-                lengths,
-                batch_first=True,
-                enforce_sorted=False,
+                sequence, lengths, batch_first=True, enforce_sorted=False
             )
             if isinstance(self.recurrent, nn.LSTM):
                 _, (hidden, _) = self.recurrent(packed)
             else:
                 _, hidden = self.recurrent(packed)
-            if self.bidirectional:
-                representation = torch.cat([hidden[-2], hidden[-1]], dim=-1)
-            else:
-                representation = hidden[-1]
-            return self.head(representation).squeeze(-1)
+            representation = (
+                torch.cat([hidden[-2], hidden[-1]], dim=-1) if self.bidirectional else hidden[-1]
+            )
+            return representation * mask.any(1).unsqueeze(-1)
+
+        def forward(self, values, mask, times):
+            return self.head(self.encode(values, mask, times)).squeeze(-1)
 
     class TemporalTransformerClassifier(nn.Module):
         def __init__(
             self,
-            input_dim: int,
-            max_length: int,
-            d_model: int = 48,
-            nhead: int = 4,
-            num_layers: int = 2,
-            dim_feedforward: int = 96,
-            dropout: float = 0.2,
-        ) -> None:
+            input_dim,
+            max_length,
+            d_model=48,
+            nhead=4,
+            num_layers=2,
+            dim_feedforward=96,
+            dropout=0.2,
+            categorical_sizes=(),
+        ):
             super().__init__()
-            if d_model % nhead != 0:
+            if d_model % nhead:
                 raise ValueError("d_model must be divisible by nhead")
-            self.event_embedding = nn.Linear(input_dim, d_model)
+            self.event_embedding = EventEmbedding(input_dim, d_model, categorical_sizes)
             self.position_embedding = nn.Embedding(max_length, d_model)
-            self.time_embedding = nn.Sequential(
-                nn.Linear(1, d_model), nn.Tanh(), nn.Linear(d_model, d_model)
-            )
             layer = nn.TransformerEncoderLayer(
-                d_model=d_model,
-                nhead=nhead,
-                dim_feedforward=dim_feedforward,
-                dropout=dropout,
+                d_model,
+                nhead,
+                dim_feedforward,
+                dropout,
                 activation="gelu",
                 batch_first=True,
                 norm_first=True,
             )
-            self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+            self.encoder = nn.TransformerEncoder(layer, num_layers, enable_nested_tensor=False)
+            self.output_size = d_model
             self.head = nn.Sequential(
-                nn.LayerNorm(d_model),
-                nn.Dropout(dropout),
-                nn.Linear(d_model, 1),
+                nn.LayerNorm(d_model), nn.Dropout(dropout), nn.Linear(d_model, 1)
             )
 
-        def forward(
-            self,
-            values: "torch.Tensor",
-            mask: "torch.Tensor",
-            times: "torch.Tensor",
-        ) -> "torch.Tensor":
-            batch, length, _ = values.shape
-            positions = torch.arange(length, device=values.device).unsqueeze(0)
-            positions = positions.expand(batch, length)
-            elapsed = torch.log1p(torch.clamp(times, min=0.0)).unsqueeze(-1)
-            embedded = (
-                self.event_embedding(values)
-                + self.position_embedding(positions)
-                + self.time_embedding(elapsed)
+        def encode(self, values, mask, times):
+            positions = torch.arange(values.shape[1], device=values.device).unsqueeze(0)
+            embedded = self.event_embedding(values, times) + self.position_embedding(positions)
+            embedded = embedded.masked_fill(~mask.unsqueeze(-1), 0)
+            safe_mask = mask.clone()
+            safe_mask[~safe_mask.any(1), 0] = True
+            encoded = self.encoder(embedded, src_key_padding_mask=~safe_mask)
+            encoded = encoded.masked_fill(~mask.unsqueeze(-1), 0)
+            return encoded.sum(1) / mask.sum(1).clamp_min(1).unsqueeze(-1)
+
+        def forward(self, values, mask, times):
+            return self.head(self.encode(values, mask, times)).squeeze(-1)
+
+    class HybridSequenceClassifier(nn.Module):
+        def __init__(
+            self, input_dim, wide_dim, categorical_sizes=(), hidden_size=48, dropout=0.2, **kwargs
+        ):
+            super().__init__()
+            self.input_dim = input_dim
+            self.sequence = RecurrentSequenceClassifier(
+                input_dim,
+                cell="gru",
+                hidden_size=hidden_size,
+                dropout=dropout,
+                categorical_sizes=categorical_sizes,
             )
-            encoded = self.encoder(embedded, src_key_padding_mask=~mask)
-            weights = mask.unsqueeze(-1).to(encoded.dtype)
-            pooled = (encoded * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1.0)
-            return self.head(pooled).squeeze(-1)
+            self.wide = nn.Sequential(
+                nn.Linear(wide_dim, 32), nn.LayerNorm(32), nn.ReLU(), nn.Dropout(dropout)
+            )
+            self.head = nn.Sequential(
+                nn.Linear(hidden_size + 32, 32), nn.ReLU(), nn.Dropout(dropout), nn.Linear(32, 1)
+            )
+
+        def forward(self, values, mask, times):
+            sequence = self.sequence.encode(values[:, :, : self.input_dim], mask, times)
+            wide = self.wide(values[:, 0, self.input_dim :])
+            return self.head(torch.cat([sequence, wide], dim=-1)).squeeze(-1)
 
 
 else:
 
     class _TorchRequired:
-        def __init__(self, *_: object, **__: object) -> None:
-            raise ImportError(
-                "optional dependency 'torch' is unavailable; install the neural extra"
-            ) from TORCH_IMPORT_ERROR
+        def __init__(self, *args, **kwargs):
+            raise ImportError("PyTorch is required for neural models")
 
-    FocalLoss = _TorchRequired
-    TabularMLP = _TorchRequired
-    RecurrentSequenceClassifier = _TorchRequired
-    TemporalTransformerClassifier = _TorchRequired
-
-
-__all__ = [
-    "FocalLoss",
-    "RecurrentSequenceClassifier",
-    "TORCH_AVAILABLE",
-    "TORCH_IMPORT_ERROR",
-    "TabularMLP",
-    "TemporalTransformerClassifier",
-]
+    ResidualTabularMLP = _TorchRequired
+    FocalLoss = TabularMLP = RecurrentSequenceClassifier = TemporalTransformerClassifier = (
+        HybridSequenceClassifier
+    ) = _TorchRequired

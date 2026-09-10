@@ -1,0 +1,189 @@
+{
+  "passes": false,
+  "comparisons": [
+    {
+      "candidate": "candidate",
+      "reference": "original_lightgbm",
+      "candidate_mean_recall": 0.43878338933577704,
+      "reference_mean_recall": 0.42882479720327193,
+      "mean_recall_gain": 0.009958592132505162,
+      "ci_lower": -0.040710420924380195,
+      "ci_upper": 0.03252408501853672,
+      "confidence_level": 0.9833333333333333,
+      "minimum_gain": 0.03,
+      "passes": false,
+      "all_cohort_gains_positive": false
+    },
+    {
+      "candidate": "candidate",
+      "reference": "original_logistic",
+      "candidate_mean_recall": 0.43878338933577704,
+      "reference_mean_recall": 0.38983012592064625,
+      "mean_recall_gain": 0.04895326341513084,
+      "ci_lower": -0.015437028019957803,
+      "ci_upper": 0.07561373045637776,
+      "confidence_level": 0.9833333333333333,
+      "minimum_gain": 0.03,
+      "passes": false,
+      "all_cohort_gains_positive": false
+    },
+    {
+      "candidate": "candidate",
+      "reference": "previous_neural",
+      "candidate_mean_recall": 0.43878338933577704,
+      "reference_mean_recall": 0.42592624647863425,
+      "mean_recall_gain": 0.012857142857142855,
+      "ci_lower": -0.03102167433446414,
+      "ci_upper": 0.027078899588824177,
+      "confidence_level": 0.9833333333333333,
+      "minimum_gain": 0.03,
+      "passes": false,
+      "all_cohort_gains_positive": false
+    }
+  ],
+  "cohorts": [
+    {
+      "cohort": 9101,
+      "patients": 568,
+      "positives": 69,
+      "selected": 57,
+      "candidate": 0.42028985507246375,
+      "original_lightgbm": 0.4057971014492754,
+      "original_logistic": 0.42028985507246375,
+      "previous_neural": 0.42028985507246375
+    },
+    {
+      "cohort": 9102,
+      "patients": 550,
+      "positives": 56,
+      "selected": 55,
+      "candidate": 0.5535714285714286,
+      "original_lightgbm": 0.5178571428571429,
+      "original_logistic": 0.44642857142857145,
+      "previous_neural": 0.5178571428571429
+    },
+    {
+      "cohort": 9103,
+      "patients": 562,
+      "positives": 69,
+      "selected": 57,
+      "candidate": 0.42028985507246375,
+      "original_lightgbm": 0.4492753623188406,
+      "original_logistic": 0.37681159420289856,
+      "previous_neural": 0.42028985507246375
+    },
+    {
+      "cohort": 9104,
+      "patients": 589,
+      "positives": 70,
+      "selected": 59,
+      "candidate": 0.35714285714285715,
+      "original_lightgbm": 0.32857142857142857,
+      "original_logistic": 0.32857142857142857,
+      "previous_neural": 0.32857142857142857
+    },
+    {
+      "cohort": 9105,
+      "patients": 577,
+      "positives": 61,
+      "selected": 58,
+      "candidate": 0.4426229508196721,
+      "original_lightgbm": 0.4426229508196721,
+      "original_logistic": 0.3770491803278688,
+      "previous_neural": 0.4426229508196721
+    }
+  ],
+  "successful_samples": 3000,
+  "requested_samples": 3000,
+  "capacity": 0.1,
+  "family_alpha": 0.05,
+  "multiplicity_adjustment": "Bonferroni across prespecified reference comparisons",
+  "sampling": "paired patients within cohort, re-ranked each draw; equal cohort weight",
+  "scope": "conditional on frozen fitted models; synthetic historical assessments",
+  "recipe_sha256": "3874b9c7890f80607bd50c26bdc130606cc3413bef22a38f3f78a65dbdbe5b0c",
+  "secondary_comparisons": {
+    "passes": false,
+    "comparisons": [
+      {
+        "candidate": "candidate",
+        "reference": "tuned_classical",
+        "candidate_mean_recall": 0.43878338933577704,
+        "reference_mean_recall": 0.4323134100397108,
+        "mean_recall_gain": 0.006469979296066253,
+        "ci_lower": -0.032569707211523656,
+        "ci_upper": 0.027395091643260254,
+        "confidence_level": 0.975,
+        "minimum_gain": 0.03,
+        "passes": false,
+        "all_cohort_gains_positive": false
+      },
+      {
+        "candidate": "candidate",
+        "reference": "best_ehr",
+        "candidate_mean_recall": 0.43878338933577704,
+        "reference_mean_recall": 0.40546787496181647,
+        "mean_recall_gain": 0.03331551437396056,
+        "ci_lower": -0.017941199353261925,
+        "ci_upper": 0.0493439271375505,
+        "confidence_level": 0.975,
+        "minimum_gain": 0.03,
+        "passes": false,
+        "all_cohort_gains_positive": false
+      }
+    ],
+    "cohorts": [
+      {
+        "cohort": 9101,
+        "patients": 568,
+        "positives": 69,
+        "selected": 57,
+        "candidate": 0.42028985507246375,
+        "tuned_classical": 0.42028985507246375,
+        "best_ehr": 0.42028985507246375
+      },
+      {
+        "cohort": 9102,
+        "patients": 550,
+        "positives": 56,
+        "selected": 55,
+        "candidate": 0.5535714285714286,
+        "tuned_classical": 0.5357142857142857,
+        "best_ehr": 0.5
+      },
+      {
+        "cohort": 9103,
+        "patients": 562,
+        "positives": 69,
+        "selected": 57,
+        "candidate": 0.42028985507246375,
+        "tuned_classical": 0.4057971014492754,
+        "best_ehr": 0.36231884057971014
+      },
+      {
+        "cohort": 9104,
+        "patients": 589,
+        "positives": 70,
+        "selected": 59,
+        "candidate": 0.35714285714285715,
+        "tuned_classical": 0.35714285714285715,
+        "best_ehr": 0.2857142857142857
+      },
+      {
+        "cohort": 9105,
+        "patients": 577,
+        "positives": 61,
+        "selected": 58,
+        "candidate": 0.4426229508196721,
+        "tuned_classical": 0.4426229508196721,
+        "best_ehr": 0.45901639344262296
+      }
+    ],
+    "successful_samples": 3000,
+    "requested_samples": 3000,
+    "capacity": 0.1,
+    "family_alpha": 0.05,
+    "multiplicity_adjustment": "Bonferroni across prespecified reference comparisons",
+    "sampling": "paired patients within cohort, re-ranked each draw; equal cohort weight",
+    "scope": "conditional on frozen fitted models; synthetic historical assessments"
+  }
+}

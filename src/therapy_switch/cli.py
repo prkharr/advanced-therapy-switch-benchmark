@@ -11,15 +11,10 @@ from typing import Any, Sequence
 from therapy_switch import __version__
 from therapy_switch.config import load_config, validate_config
 from therapy_switch.data import (
-    build_cohort,
-    build_event_sequences,
     generate_synthetic_claims,
-    validate_cohort_timeline,
 )
-from therapy_switch.features import build_tabular_features
-from therapy_switch.io import load_claims_directory, save_claims_directory
-from therapy_switch.pipeline import run_pipeline
-from therapy_switch.schemas import validate_tables
+from therapy_switch.io import save_claims_directory
+from therapy_switch.pipeline import prepare_inputs, run_pipeline
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -78,7 +73,9 @@ def _run_command(arguments: argparse.Namespace) -> int:
     payload: dict[str, Any] = {
         "status": "COMPLETED",
         "primary_experiment": result.primary_experiment,
-        "eligible_patients": len(result.cohort),
+        "eligible_patients": int(result.cohort.patient_id.nunique()),
+        "eligible_snapshots": len(result.cohort),
+        "model_statuses": dict(zip(primary.benchmark.Model, primary.benchmark.Status)),
         "prevalence": float(result.cohort["label"].mean()),
         "recommended_model": primary.recommendation.model,
         "decision": primary.recommendation.decision,
@@ -109,26 +106,17 @@ def _generate_command(arguments: argparse.Namespace) -> int:
 
 def _validate_command(arguments: argparse.Namespace) -> int:
     config = load_config(arguments.config)
-    if str(config["data"].get("source", "synthetic")).lower() == "synthetic":
-        tables = generate_synthetic_claims(config)
-    else:
-        tables = load_claims_directory(config)
-    validate_tables(tables)
-    cohort = build_cohort(tables, config)
-    validate_cohort_timeline(cohort, tables, config)
-    features = build_tabular_features(tables, cohort, config)
-    sequences = build_event_sequences(tables, cohort, config)
-    sequences.to_sequence_split().validated(expected_rows=len(cohort))
+    _, inputs = prepare_inputs(config)
     print(
         json.dumps(
             {
                 "status": "VALID",
-                "eligible_patients": len(cohort),
-                "positive_patients": int(cohort["label"].sum()),
-                "prevalence": float(cohort["label"].mean()),
-                "feature_count": len(features.columns) - 3,
-                "sequence_patients": len(sequences),
-                "sequence_max_length": int(sequences.attention_mask.shape[1]),
+                "eligible_patients": int(inputs.snapshots.patient_id.nunique()),
+                "eligible_snapshots": len(inputs.snapshots),
+                "positive_snapshots": int(inputs.snapshots.label.sum()),
+                "prevalence": float(inputs.snapshots.label.mean()),
+                "feature_count": len(inputs.feature_columns),
+                "event_rows": len(inputs.events),
             },
             indent=2,
         )

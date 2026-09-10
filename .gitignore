@@ -14,9 +14,84 @@ build/
 data/raw/
 data/interim/
 data/processed/
+data/synthetic/
+data/prepared/
+data/governed/
+work/
 artifacts/*
 !artifacts/.gitkeep
 
 # Generated benchmark outputs are reproducible and should be reviewed before commit.
 outputs/*
 !outputs/.gitkeep
+
+# Private project context, exports, and environment handoff material.
+project_context/
+local_handoff/
+private_context/
+context_private/
+chat_exports/
+*.chat-export.*
+.codex_private/
+.local_agent/
+.codex/
+
+# Local assistant instructions and notes are not project deliverables.
+AGENTS.md
+AGENT_NOTES.*
+CODEX*.md
+CODEX*.txt
+ASTRA*.md
+ASTRA*.txt
+
+# Personal environment operating guides remain local.
+WORK_LAPTOP_GUIDE.*
+SENTINEL_RUNBOOK.*
+SENTINEL_VALIDATION_CHECKLIST.*
+WORK_ENVIRONMENT_SETUP.*
+SNOWFLAKE_CONNECTION_GUIDE.*
+PHASE_2_HANDOFF.*
+*_SENTINEL_STEPS.*
+
+# Credentials, private configuration, and key material.
+.env
+.env.*
+secrets/
+credentials/
+configs/private/
+*.private.*
+*.local.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Scope name-based secret exclusions to root files and data/config exports
+# so legitimate source modules such as tokenizers remain visible.
+/*token*
+/*secret*
+/*credential*
+*token*.json
+*token*.yaml
+*token*.yml
+*token*.toml
+*token*.ini
+*token*.env
+*token*.txt
+*token*.csv
+*secret*.json
+*secret*.yaml
+*secret*.yml
+*secret*.toml
+*secret*.ini
+*secret*.env
+*secret*.txt
+*secret*.csv
+*credential*.json
+*credential*.yaml
+*credential*.yml
+*credential*.toml
+*credential*.ini
+*credential*.env
+*credential*.txt
+*credential*.csv

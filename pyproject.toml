@@ -15,6 +15,7 @@ dependencies = [
   "matplotlib>=3.6",
   "numpy>=1.23",
   "pandas>=1.5",
+  "pyarrow>=12.0",
   "PyYAML>=6.0",
   "scikit-learn>=1.2",
   "seaborn>=0.12",
@@ -22,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+benchmark = ["lightgbm>=4.0", "torch>=2.0", "shap>=0.42"]
+research = ["scikit-learn>=1.5", "tabm>=0.0.3,<0.1", "pytabkit>=1.7.3,<2", "tabicl>=2.2,<3", "tabpfn>=8.5,<9"]
+snowflake = ["snowflake-snowpark-python>=1.14"]
 boosting = [
   "xgboost>=1.7",
   "lightgbm>=3.3",
@@ -49,6 +53,8 @@ dev = [
 
 [project.scripts]
 therapy-switch = "therapy_switch.cli:main"
+therapy-switch-patients = "therapy_switch.patient_study:main"
+therapy-switch-deliver = "therapy_switch.delivery.pipeline:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

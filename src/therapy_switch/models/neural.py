@@ -18,6 +18,7 @@ import numpy as np
 from .architectures import (
     TORCH_AVAILABLE,
     FocalLoss,
+    HybridSequenceClassifier,
     RecurrentSequenceClassifier,
     TabularMLP,
     TemporalTransformerClassifier,
@@ -167,6 +168,7 @@ def _train_network(
     torch = _require_torch()
     _set_seed(random_state)
     device = _device_from(options)
+    torch.set_num_threads(int(options.get("num_threads", 2)))
     model = model.to(device)
     batch_size = int(options.get("batch_size", 64))
     max_epochs = int(options.get("max_epochs", 50))
@@ -217,6 +219,7 @@ def _train_network(
     }
     best_state = copy.deepcopy(model.state_dict())
     best_loss = float("inf")
+    best_score = -float("inf")
     stale_epochs = 0
     min_delta = float(options.get("min_delta", 1e-5))
 
@@ -251,7 +254,8 @@ def _train_network(
         history["val_pr_auc"].append(val_pr_auc)
         history["learning_rate"].append(float(optimizer.param_groups[0]["lr"]))
 
-        if val_loss < best_loss - min_delta:
+        if val_pr_auc > best_score + min_delta:
+            best_score = val_pr_auc
             best_loss = val_loss
             best_state = copy.deepcopy(model.state_dict())
             stale_epochs = 0
@@ -266,6 +270,8 @@ def _train_network(
     )
     history["epochs_trained"] = len(history["train_loss"])
     history["best_val_loss"] = best_loss
+    history["best_val_pr_auc"] = best_score
+    history["selection_metric"] = "validation_average_precision"
     history["restored_val_loss"] = final_loss
     history["early_stopped"] = len(history["train_loss"]) < max_epochs
     history["device"] = str(device)
@@ -310,29 +316,67 @@ class TorchTabularEstimator:
 class SequenceScaler:
     mean: np.ndarray
     scale: np.ndarray
+    category_count: int = 0
+    use_time: bool = True
+    shuffle_order: bool = False
+    random_state: int = 42
+    wide_preprocessor: Any = None
 
     @classmethod
-    def fit(cls, split: SequenceSplit) -> "SequenceScaler":
-        assert split.mask is not None
+    def fit(cls, split, options=None, random_state=42):
+        options = options or {}
         valid = np.asarray(split.values, dtype=float)[split.mask]
-        if not np.isfinite(valid).all():
-            raise ValueError("valid sequence event features must be finite")
-        mean = valid.mean(axis=0)
-        scale = valid.std(axis=0)
-        scale[scale < 1e-8] = 1.0
-        return cls(mean=mean.astype(np.float32), scale=scale.astype(np.float32))
+        mean = valid.mean(0) if len(valid) else np.zeros(split.values.shape[-1])
+        scale = valid.std(0) if len(valid) else np.ones(split.values.shape[-1])
+        scale[scale < 1e-8] = 1
+        count = len(split.categorical_sizes)
+        if count:
+            # Tokens retain integer IDs. Temporal recency is log-scaled in the network.
+            mean[:] = 0
+            scale[:] = 1
+        return cls(
+            mean.astype(np.float32),
+            scale.astype(np.float32),
+            count,
+            options.get("use_time", True),
+            options.get("shuffle_order", False),
+            random_state,
+        )
 
-    def transform(self, split: SequenceSplit) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def transform(self, split):
         split.validated(expected_rows=len(split.values))
-        assert split.mask is not None
         values = (np.asarray(split.values, dtype=np.float32) - self.mean) / self.scale
-        values[~split.mask] = 0.0
+        values[~split.mask] = 0
         times = (
             np.zeros(split.mask.shape, dtype=np.float32)
             if split.times is None
-            else np.asarray(split.times, dtype=np.float32)
+            else np.array(split.times, dtype=np.float32, copy=True)
         )
-        times[~split.mask] = 0.0
+        times[~split.mask] = 0
+        if not self.use_time:
+            times[:] = 0
+            if self.category_count:
+                values[:, :, self.category_count :] = 0
+        if self.shuffle_order:
+            import hashlib
+
+            for row in range(len(values)):
+                length = int(split.mask[row].sum())
+                digest = int.from_bytes(
+                    hashlib.sha256(values[row, :length].tobytes()).digest()[:4], "little"
+                )
+                order = np.random.default_rng(self.random_state + digest).permutation(length)
+                values[row, :length] = values[row, :length][order]
+                times[row, :length] = times[row, :length][order]
+        if self.wide_preprocessor is not None:
+            if split.wide is None:
+                raise ValueError("Hybrid scoring requires the linked wide feature frame")
+            wide = np.asarray(self.wide_preprocessor.transform(split.wide), dtype=np.float32)
+            if len(wide) != len(values):
+                raise ValueError("Hybrid wide and sequence rows must align")
+            values = np.concatenate(
+                [values, np.repeat(wide[:, None, :], values.shape[1], axis=1)], axis=-1
+            )
         return values, split.mask.astype(bool), times
 
 
@@ -497,10 +541,20 @@ class SequenceModelRunner(BaseModelRunner):
         max_length: int,
         options: Mapping[str, Any],
     ) -> Any:
+        categorical_sizes = tuple(options.get("categorical_sizes", ()))
+        if self.architecture == "hybrid":
+            return HybridSequenceClassifier(
+                input_dim=input_dim,
+                wide_dim=options["wide_dim"],
+                categorical_sizes=categorical_sizes,
+                hidden_size=int(options.get("hidden_size", 48)),
+                dropout=float(options.get("dropout", 0.2)),
+            )
         if self.architecture in {"lstm", "gru", "bilstm"}:
             return RecurrentSequenceClassifier(
                 input_dim=input_dim,
                 cell="gru" if self.architecture == "gru" else "lstm",
+                categorical_sizes=categorical_sizes,
                 hidden_size=int(options.get("hidden_size", 48)),
                 num_layers=int(options.get("num_layers", 1)),
                 dropout=float(options.get("dropout", 0.2)),
@@ -510,6 +564,7 @@ class SequenceModelRunner(BaseModelRunner):
             return TemporalTransformerClassifier(
                 input_dim=input_dim,
                 max_length=max_length,
+                categorical_sizes=categorical_sizes,
                 d_model=int(options.get("d_model", 48)),
                 nhead=int(options.get("nhead", 4)),
                 num_layers=int(options.get("num_layers", 2)),
@@ -543,7 +598,19 @@ class SequenceModelRunner(BaseModelRunner):
             assert run.sequence_val is not None
             assert run.sequence_test is not None
             started = perf_counter()
-            scaler = SequenceScaler.fit(run.sequence_train)
+            options["categorical_sizes"] = run.sequence_train.categorical_sizes
+            scaler = SequenceScaler.fit(run.sequence_train, options, run.random_state)
+            if self.architecture == "hybrid":
+                scaler.wide_preprocessor = build_preprocessor(run.X_train, scale_numeric=True)
+                scaler.wide_preprocessor.fit(run.X_train)
+                options["wide_dim"] = scaler.wide_preprocessor.transform(
+                    run.X_train.iloc[:1]
+                ).shape[1]
+                run.sequence_train.wide, run.sequence_val.wide, run.sequence_test.wide = (
+                    run.X_train,
+                    run.X_val,
+                    run.X_test,
+                )
             train_values, train_mask, train_times = scaler.transform(run.sequence_train)
             val_values, val_mask, val_times = scaler.transform(run.sequence_val)
             max_length = run.sequence_train.values.shape[1]
@@ -559,7 +626,7 @@ class SequenceModelRunner(BaseModelRunner):
             candidates: dict[str, tuple[Any, dict[str, Any], np.ndarray, float]] = {}
             for loss_name in losses:
                 _set_seed(run.random_state)
-                network = self._network(train_values.shape[2], max_length, options)
+                network = self._network(run.sequence_train.values.shape[2], max_length, options)
                 trained, history, val_probability = _train_network(
                     network,
                     (train_values, train_mask, train_times, y_train),
@@ -676,3 +743,9 @@ class TransformerRunner(SequenceModelRunner):
     key = "transformer"
     model_name = "Transformer"
     architecture = "transformer"
+
+
+class HybridRunner(SequenceModelRunner):
+    key = "hybrid"
+    model_name = "Hybrid GRU Wide"
+    architecture = "hybrid"

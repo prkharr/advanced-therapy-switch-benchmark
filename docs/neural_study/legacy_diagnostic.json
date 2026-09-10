@@ -1,0 +1,41 @@
+{
+  "scope": "Legacy seed-42 diagnostic after freezing; test was previously seen and is not independent confirmation.",
+  "recipe_sha256": "4935c539d91f91ead8db44f9cad560cca79284732694042388ce56207d0a7e91",
+  "reload_verified": true,
+  "batch_invariance_verified": true,
+  "metrics": [
+    {
+      "model": "Neural ensemble",
+      "ap": 0.4604019431335134,
+      "fraction": 0.1,
+      "selected_count": 165,
+      "selected_positives": 66,
+      "total_positives": 126,
+      "recall": 0.5238095238095238,
+      "precision": 0.4,
+      "lift": 5.219047619047619
+    },
+    {
+      "model": "lightgbm_reference",
+      "ap": 0.4480833078553856,
+      "fraction": 0.1,
+      "selected_count": 165,
+      "selected_positives": 63,
+      "total_positives": 126,
+      "recall": 0.5,
+      "precision": 0.38181818181818183,
+      "lift": 4.9818181818181815
+    },
+    {
+      "model": "logistic_reference",
+      "ap": 0.4146218466752646,
+      "fraction": 0.1,
+      "selected_count": 165,
+      "selected_positives": 60,
+      "total_positives": 126,
+      "recall": 0.47619047619047616,
+      "precision": 0.36363636363636365,
+      "lift": 4.744588744588745
+    }
+  ]
+}

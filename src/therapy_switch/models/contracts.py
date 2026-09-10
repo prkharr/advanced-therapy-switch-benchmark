@@ -57,6 +57,9 @@ class SequenceSplit:
     event_dates: Optional[np.ndarray] = None
     index_dates: Optional[Sequence[Any]] = None
     pre_index_verified: bool = False
+    available_dates: Optional[np.ndarray] = None
+    categorical_sizes: tuple[int, ...] = ()
+    wide: Any = None
 
     def validated(self, expected_rows: Optional[int] = None) -> "SequenceSplit":
         values = np.asarray(self.values)
@@ -74,10 +77,12 @@ class SequenceSplit:
         )
         if mask.shape != values.shape[:2]:
             raise ValueError("sequence mask must match the patient/event dimensions")
-        if np.any(mask.sum(axis=1) == 0):
-            raise ValueError("every patient must have at least one pre-index event")
         if not np.isfinite(values[mask]).all():
             raise ValueError("valid sequence event features must be finite")
+        for column, size in enumerate(self.categorical_sizes):
+            tokens = values[:, :, column][mask]
+            if np.any(tokens != np.floor(tokens)) or np.any(tokens < 0) or np.any(tokens >= size):
+                raise ValueError("Invalid categorical token ID for training vocabulary")
         # Packed recurrent sequences require real events followed by right
         # padding; accepting holes would silently discard later valid events.
         for row, row_mask in enumerate(mask):
@@ -126,6 +131,12 @@ class SequenceSplit:
                     "post-index event detected at patient row "
                     f"{int(first[0])}, event position {int(first[1])}"
                 )
+            if self.available_dates is not None:
+                available = np.asarray(self.available_dates, dtype="datetime64[ns]")
+                if available.shape != mask.shape or pd.isna(available[mask]).any():
+                    raise ValueError("Invalid sequence availability dates")
+                if np.any(mask & (available > index_dates[:, None])):
+                    raise LeakageError("Sequence event unavailable at index")
 
             # Events must be in chronological order for temporal encoders.
             for row in range(values.shape[0]):
@@ -192,6 +203,9 @@ class ModelRun:
             raise LeakageError(
                 "target-like columns are not permitted in model features: " + ", ".join(leaked)
             )
+        from therapy_switch.features.leakage import validate_predictor_names
+
+        validate_predictor_names(expected_columns)
 
         targets = self.targets()
         for split, frame, target in (

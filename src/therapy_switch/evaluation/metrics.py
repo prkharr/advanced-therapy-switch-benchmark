@@ -159,6 +159,7 @@ def ranking_metrics(
         result[f"Recall@{label}"] = float(values["recall"])
         result[f"Precision@{label}"] = float(values["precision"])
         result[f"Lift@{label}"] = float(values["lift"])
+        result[f"TruePositives@{label}"] = float(values["selected_positives"])
     return result
 
 

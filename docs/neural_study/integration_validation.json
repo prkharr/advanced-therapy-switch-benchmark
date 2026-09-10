@@ -1,0 +1,56 @@
+{
+  "scope": "Historical seed-42 integration after freezing; not independent confirmation",
+  "cohort": {
+    "negative_snapshots": 8341,
+    "patients": 2997,
+    "positive_snapshots": 640,
+    "prevalence": 0.07126155216568311,
+    "snapshots": 8981
+  },
+  "completed_models": [
+    "Naive Baseline",
+    "Logistic Regression",
+    "LightGBM",
+    "Neural Ensemble"
+  ],
+  "reload_verified": {
+    "logistic_regression": true,
+    "lightgbm": true,
+    "neural_ensemble": true
+  },
+  "validation_selected_model": "Logistic Regression",
+  "heldout_score_rows": 1644,
+  "hcp_output_rows": 467,
+  "calibration_selected": "sigmoid",
+  "explainability": [
+    {
+      "model": "Logistic Regression",
+      "status": "COMPLETED",
+      "method": "native_coefficients"
+    },
+    {
+      "model": "LightGBM",
+      "status": "COMPLETED",
+      "method": "native_feature_importance"
+    },
+    {
+      "model": "Neural Ensemble",
+      "status": "COMPLETED",
+      "method": "permutation_importance_pr_auc"
+    }
+  ],
+  "posthoc_sample_adjustment": {
+    "scope": "Post-hoc attribution only; models and predictions unchanged",
+    "initial_sample_rows": 40,
+    "initial_sample_positives": 0,
+    "revised_sample_rows": 500,
+    "revised_sample_positives": 43,
+    "method": "permutation_importance_pr_auc",
+    "status": "COMPLETED",
+    "permutation_repeats": 2,
+    "seed": 42,
+    "ap_verified": 0.4604019431335134
+  },
+  "source_matches_frozen_study": true,
+  "tests_passed": 105
+}

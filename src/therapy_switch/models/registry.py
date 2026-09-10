@@ -8,6 +8,15 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from .advanced_tabular import (
+    NeuralEnsembleRunner,
+    RealMLPRunner,
+    ResidualMLPRunner,
+    TabICLRunner,
+    TabMRunner,
+    TabPFNEnsembleRunner,
+    TabPFNRunner,
+)
 from .classical import (
     BaseModelRunner,
     CatBoostRunner,
@@ -21,10 +30,27 @@ from .contracts import ModelResult, ModelRun, SequenceSplit
 from .neural import (
     BiLSTMRunner,
     GRURunner,
+    HybridRunner,
     LSTMRunner,
     MLPRunner,
     TransformerRunner,
 )
+
+
+class LightGBMWideRunner(LightGBMRunner):
+    key = "lightgbm_wide"
+    model_name = "LightGBM Without Recency"
+
+
+class GRUNoTimeRunner(GRURunner):
+    key = "gru_no_time"
+    model_name = "GRU Without Time"
+
+
+class GRUShuffledRunner(GRURunner):
+    key = "gru_shuffled"
+    model_name = "GRU Shuffled Without Time"
+
 
 RUNNER_TYPES: tuple[type[BaseModelRunner], ...] = (
     NaiveBaselineRunner,
@@ -38,6 +64,17 @@ RUNNER_TYPES: tuple[type[BaseModelRunner], ...] = (
     GRURunner,
     BiLSTMRunner,
     TransformerRunner,
+    HybridRunner,
+    LightGBMWideRunner,
+    GRUNoTimeRunner,
+    GRUShuffledRunner,
+    TabMRunner,
+    RealMLPRunner,
+    TabICLRunner,
+    ResidualMLPRunner,
+    TabPFNRunner,
+    NeuralEnsembleRunner,
+    TabPFNEnsembleRunner,
 )
 
 

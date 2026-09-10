@@ -1,8 +1,6 @@
-"""Stratified and paired bootstrap confidence intervals."""
+"""Paired percentile intervals with patient-cluster resampling for repeated snapshots."""
 
 from __future__ import annotations
-
-from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -13,196 +11,180 @@ from .metrics import top_fraction_metrics, validate_predictions
 BOOTSTRAP_METRICS = (
     "ROC-AUC",
     "PR-AUC",
-    "Recall@Top10%",
-    "Recall@Top20%",
-    "Lift@Top10%",
-    "Lift@Top20%",
+    *[
+        f"{name}@Top{p}%"
+        for p in (5, 10, 20)
+        for name in ("Recall", "Precision", "Lift", "TruePositives")
+    ],
 )
 
 
-def _metric_values(y_true: np.ndarray, y_score: np.ndarray) -> dict[str, float]:
-    top_10 = top_fraction_metrics(y_true, y_score, 0.10)
-    top_20 = top_fraction_metrics(y_true, y_score, 0.20)
-    return {
-        "ROC-AUC": float(roc_auc_score(y_true, y_score)),
-        "PR-AUC": float(average_precision_score(y_true, y_score)),
-        "Recall@Top10%": float(top_10["recall"]),
-        "Recall@Top20%": float(top_20["recall"]),
-        "Lift@Top10%": float(top_10["lift"]),
-        "Lift@Top20%": float(top_20["lift"]),
+def _metric_values(y, scores):
+    out = {
+        "ROC-AUC": float(roc_auc_score(y, scores)),
+        "PR-AUC": float(average_precision_score(y, scores)),
     }
-
-
-def _stratified_indices(y_true: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Sample each observed class with replacement and retain its class count."""
-
-    negative = np.flatnonzero(y_true == 0)
-    positive = np.flatnonzero(y_true == 1)
-    sampled = np.concatenate(
-        (
-            rng.choice(negative, size=len(negative), replace=True),
-            rng.choice(positive, size=len(positive), replace=True),
+    for p in (5, 10, 20):
+        m = top_fraction_metrics(y, scores, p / 100)
+        out.update(
+            {
+                f"{k}@Top{p}%": float(m[v])
+                for k, v in [
+                    ("Recall", "recall"),
+                    ("Precision", "precision"),
+                    ("Lift", "lift"),
+                    ("TruePositives", "selected_positives"),
+                ]
+            }
         )
-    )
-    rng.shuffle(sampled)
-    return sampled
+    return out
 
 
-def _validate_bootstrap_inputs(
-    y_true: Sequence[int] | np.ndarray,
-    y_score: Sequence[float] | np.ndarray,
-    n_bootstrap: int,
-    confidence_level: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    y, scores = validate_predictions(y_true, y_score)
-    if np.unique(y).size < 2:
-        raise ValueError("Bootstrap inference requires at least one patient per class.")
-    if int(n_bootstrap) != n_bootstrap or n_bootstrap < 2:
-        raise ValueError("n_bootstrap must be an integer of at least 2.")
-    if not 0.0 < float(confidence_level) < 1.0:
-        raise ValueError("confidence_level must be in (0, 1).")
+def _bootstrap_indices(y, rng, patient_ids=None):
+    if patient_ids is None:
+        out = np.concatenate(
+            [
+                rng.choice(np.flatnonzero(y == c), size=int((y == c).sum()), replace=True)
+                for c in (0, 1)
+            ]
+        )
+        rng.shuffle(out)
+        return out
+    ids = np.asarray(patient_ids)
+    if len(ids) != len(y) or pd.isna(ids).any():
+        raise ValueError("Patient cluster identifiers must align and cannot be missing")
+    groups = {pid: np.flatnonzero(ids == pid) for pid in pd.unique(ids)}
+    keys = list(groups)
+    draws = rng.integers(0, len(keys), size=len(keys))
+    return np.concatenate([groups[keys[i]] for i in draws])
+
+
+def _inputs(y, scores, n_bootstrap, confidence_level, patient_ids):
+    y, scores = validate_predictions(y, scores)
+    if np.unique(y).size != 2 or n_bootstrap < 2 or not 0 < confidence_level < 1:
+        raise ValueError(
+            "Bootstrap requires two classes, at least two draws and confidence in (0,1)"
+        )
+    if patient_ids is not None and (len(patient_ids) != len(y) or pd.isna(patient_ids).any()):
+        raise ValueError("Patient cluster identifiers must align and cannot be missing")
     return y, scores
 
 
-def bootstrap_confidence_intervals(
-    y_true: Sequence[int] | np.ndarray,
-    y_score: Sequence[float] | np.ndarray,
+def paired_bootstrap_comparison(
+    y_true,
+    classical_scores,
+    deep_learning_scores,
     *,
-    model: str,
-    n_bootstrap: int = 1000,
-    confidence_level: float = 0.95,
-    random_state: int = 42,
-) -> pd.DataFrame:
-    """Return percentile CIs using class-stratified patient resampling."""
-
-    y, scores = _validate_bootstrap_inputs(y_true, y_score, n_bootstrap, confidence_level)
-    point = _metric_values(y, scores)
-    samples = {metric: [] for metric in BOOTSTRAP_METRICS}
+    classical_model,
+    deep_learning_model,
+    n_bootstrap=1000,
+    confidence_level=0.95,
+    random_state=42,
+    patient_ids=None,
+):
+    y, left = _inputs(y_true, classical_scores, n_bootstrap, confidence_level, patient_ids)
+    _, right = validate_predictions(y, deep_learning_scores)
+    lp, rp = _metric_values(y, left), _metric_values(y, right)
+    differences = []
     rng = np.random.default_rng(random_state)
     for _ in range(n_bootstrap):
-        indices = _stratified_indices(y, rng)
-        values = _metric_values(y[indices], scores[indices])
-        for metric in BOOTSTRAP_METRICS:
-            if np.isfinite(values[metric]):
-                samples[metric].append(values[metric])
+        ids = _bootstrap_indices(y, rng, patient_ids)
+        if np.unique(y[ids]).size < 2:
+            continue
+        a, b = _metric_values(y[ids], left[ids]), _metric_values(y[ids], right[ids])
+        differences.append([b[k] - a[k] for k in BOOTSTRAP_METRICS])
+    if len(differences) < 2:
+        raise ValueError("Too few valid bootstrap draws")
+    distribution = np.asarray(differences)
+    alpha = (1 - confidence_level) / 2
+    lower, upper = np.quantile(distribution, [alpha, 1 - alpha], axis=0)
+    return pd.DataFrame(
+        [
+            {
+                "metric": k,
+                "classical_model": classical_model,
+                "deep_learning_model": deep_learning_model,
+                "classical_estimate": lp[k],
+                "deep_learning_estimate": rp[k],
+                "difference_dl_minus_classical": rp[k] - lp[k],
+                "ci_lower": lower[i],
+                "ci_upper": upper[i],
+                "confidence_level": confidence_level,
+                "statistically_significant": bool(lower[i] > 0 or upper[i] < 0),
+                "successful_samples": len(distribution),
+                "requested_samples": n_bootstrap,
+                "sampling_unit": "patient_cluster" if patient_ids is not None else "stratified_row",
+                "multiplicity_adjusted": False,
+            }
+            for i, k in enumerate(BOOTSTRAP_METRICS)
+        ]
+    )
 
-    alpha = 1.0 - confidence_level
-    rows: list[dict[str, float | int | str]] = []
-    for metric in BOOTSTRAP_METRICS:
-        distribution = np.asarray(samples[metric], dtype=float)
-        rows.append(
+
+def bootstrap_confidence_intervals(
+    y_true,
+    y_score,
+    *,
+    model,
+    n_bootstrap=1000,
+    confidence_level=0.95,
+    random_state=42,
+    patient_ids=None,
+):
+    y, scores = _inputs(y_true, y_score, n_bootstrap, confidence_level, patient_ids)
+    point, rng, samples = _metric_values(y, scores), np.random.default_rng(random_state), []
+    for _ in range(n_bootstrap):
+        ids = _bootstrap_indices(y, rng, patient_ids)
+        if np.unique(y[ids]).size == 2:
+            values = _metric_values(y[ids], scores[ids])
+            samples.append([values[k] for k in BOOTSTRAP_METRICS])
+    if len(samples) < 2:
+        raise ValueError("Too few valid bootstrap draws")
+    samples = np.asarray(samples)
+    alpha = (1 - confidence_level) / 2
+    lower, upper = np.quantile(samples, [alpha, 1 - alpha], axis=0)
+    return pd.DataFrame(
+        [
             {
                 "model": model,
-                "metric": metric,
-                "estimate": point[metric],
-                "ci_lower": float(np.quantile(distribution, alpha / 2.0)),
-                "ci_upper": float(np.quantile(distribution, 1.0 - alpha / 2.0)),
-                "standard_error": float(np.std(distribution, ddof=1)),
-                "confidence_level": float(confidence_level),
-                "successful_samples": int(distribution.size),
+                "metric": k,
+                "estimate": point[k],
+                "ci_lower": lower[i],
+                "ci_upper": upper[i],
+                "standard_error": samples[:, i].std(ddof=1),
+                "confidence_level": confidence_level,
+                "successful_samples": len(samples),
+                "requested_samples": n_bootstrap,
+                "sampling_unit": "patient_cluster" if patient_ids is not None else "stratified_row",
             }
-        )
-    return pd.DataFrame(rows)
+            for i, k in enumerate(BOOTSTRAP_METRICS)
+        ]
+    )
 
 
-def bootstrap_all_models(
-    y_true: Sequence[int] | np.ndarray,
-    predictions: Mapping[str, Sequence[float] | np.ndarray],
-    *,
-    n_bootstrap: int = 1000,
-    confidence_level: float = 0.95,
-    random_state: int = 42,
-) -> pd.DataFrame:
-    """Calculate reproducible confidence intervals for each valid model."""
-
-    frames = []
-    for offset, (model, scores) in enumerate(predictions.items()):
-        frames.append(
-            bootstrap_confidence_intervals(
-                y_true,
-                scores,
-                model=model,
-                n_bootstrap=n_bootstrap,
-                confidence_level=confidence_level,
-                random_state=random_state + offset,
-            )
-        )
+def bootstrap_all_models(y_true, predictions, **kwargs):
+    frames = [
+        bootstrap_confidence_intervals(y_true, scores, model=name, **kwargs)
+        for name, scores in predictions.items()
+    ]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def paired_bootstrap_comparison(
-    y_true: Sequence[int] | np.ndarray,
-    classical_scores: Sequence[float] | np.ndarray,
-    deep_learning_scores: Sequence[float] | np.ndarray,
-    *,
-    classical_model: str,
-    deep_learning_model: str,
-    n_bootstrap: int = 1000,
-    confidence_level: float = 0.95,
-    random_state: int = 42,
-) -> pd.DataFrame:
-    """Compare models on identical resampled patients.
-
-    Differences are defined as ``deep learning - classical``.  The two-sided
-    bootstrap p-value tests whether zero lies away from the empirical
-    difference distribution; confidence intervals are the primary result.
-    """
-
-    y, classical = _validate_bootstrap_inputs(
-        y_true, classical_scores, n_bootstrap, confidence_level
-    )
-    _, deep_learning = validate_predictions(y, deep_learning_scores)
-    classical_point = _metric_values(y, classical)
-    dl_point = _metric_values(y, deep_learning)
-    differences = {metric: [] for metric in BOOTSTRAP_METRICS}
-    rng = np.random.default_rng(random_state)
-    for _ in range(n_bootstrap):
-        indices = _stratified_indices(y, rng)
-        classical_values = _metric_values(y[indices], classical[indices])
-        dl_values = _metric_values(y[indices], deep_learning[indices])
-        for metric in BOOTSTRAP_METRICS:
-            difference = dl_values[metric] - classical_values[metric]
-            if np.isfinite(difference):
-                differences[metric].append(difference)
-
-    alpha = 1.0 - confidence_level
-    rows: list[dict[str, float | int | bool | str]] = []
-    for metric in BOOTSTRAP_METRICS:
-        distribution = np.asarray(differences[metric], dtype=float)
-        lower = float(np.quantile(distribution, alpha / 2.0))
-        upper = float(np.quantile(distribution, 1.0 - alpha / 2.0))
-        below_or_equal = (np.count_nonzero(distribution <= 0.0) + 1) / (distribution.size + 1)
-        above_or_equal = (np.count_nonzero(distribution >= 0.0) + 1) / (distribution.size + 1)
-        p_value = min(1.0, 2.0 * min(below_or_equal, above_or_equal))
-        rows.append(
-            {
-                "metric": metric,
-                "classical_model": classical_model,
-                "deep_learning_model": deep_learning_model,
-                "classical_estimate": classical_point[metric],
-                "deep_learning_estimate": dl_point[metric],
-                "difference_dl_minus_classical": (dl_point[metric] - classical_point[metric]),
-                "ci_lower": lower,
-                "ci_upper": upper,
-                "confidence_level": float(confidence_level),
-                "p_value_two_sided": float(p_value),
-                "statistically_significant": bool(lower > 0.0 or upper < 0.0),
-                "successful_samples": int(distribution.size),
-            }
+def align_external_scores(test_snapshots, external_scores, score_column="reference_score"):
+    """Fail closed on population mismatches; caller must verify model provenance/split."""
+    required = {"snapshot_id", score_column}
+    if not required.issubset(external_scores) or external_scores.snapshot_id.duplicated().any():
+        raise ValueError("Reference predictions require one score per snapshot")
+    if set(external_scores.snapshot_id) != set(test_snapshots.snapshot_id):
+        raise ValueError(
+            "Reference predictions must cover exactly the held-out snapshot population"
         )
-    return pd.DataFrame(rows)
+    aligned = test_snapshots[["snapshot_id", "label"]].merge(
+        external_scores, on="snapshot_id", validate="one_to_one"
+    )
+    _, scores = validate_predictions(aligned.label, aligned[score_column])
+    return scores
 
 
-# Explicit aliases for callers that use "stratified" in the function name.
 stratified_bootstrap_ci = bootstrap_confidence_intervals
 paired_stratified_bootstrap = paired_bootstrap_comparison
-
-
-__all__ = [
-    "BOOTSTRAP_METRICS",
-    "bootstrap_all_models",
-    "bootstrap_confidence_intervals",
-    "paired_bootstrap_comparison",
-    "paired_stratified_bootstrap",
-    "stratified_bootstrap_ci",
-]

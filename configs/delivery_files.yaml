@@ -1,0 +1,25 @@
+# Local approved extracts only. Adjust dates, mappings and cohort definitions.
+benchmark_config: default.yaml
+overrides:
+  data:
+    source: files
+    input_dir: ../data/raw
+    file_format: csv
+    as_of_date: "2025-12-31"
+delivery:
+  scoring_date: "2024-12-01"
+  patient_fraction: 0.10
+  feature_contract_version: claims-v1
+  data_scope: "Local extract - scope must be reviewed"
+  adapter: therapy_switch.delivery.adapters:load_raw
+  output_dir: ../outputs/field_delivery
+  artifact_dir: ../artifacts/field_delivery
+  model:
+    trainer: therapy_switch.delivery.model_plugins:fit_recipe
+    recipe: field_model.json
+    evidence_status: experimental
+  hcp:
+    attribution_rule: most_recent_relevant_prescriber
+    relevant_specialties: [sleep_medicine, neurology]
+    minimum_priority_patients: 1
+    tier_rank_percentiles: [0.20, 0.50]

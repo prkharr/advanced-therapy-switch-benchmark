@@ -505,6 +505,78 @@ def save_hcp_targeting_output(
     return output
 
 
+def build_snapshot_hcp_output(patient_scores, events, config):
+    """Aggregate the latest snapshot per patient/targeting period, then attribute.
+
+    Only events linked to that selected snapshot can affect its attribution.
+    """
+    period = config.get("targeting_period", "M")
+    if period not in {"M", "Q"}:
+        raise ValueError("targeting_period must be M or Q")
+    scores = patient_scores.copy()
+    if scores.snapshot_id.duplicated().any():
+        raise ValueError("Duplicate patient scores for snapshot")
+    scores["targeting_period"] = pd.to_datetime(scores.index_date).dt.to_period(period).astype(str)
+    scores = scores.sort_values(["index_date", "snapshot_id"]).drop_duplicates(
+        ["patient_id", "targeting_period"], keep="last"
+    )
+    targeting_frames, attribution_frames = [], []
+    for targeting_period, group in scores.groupby("targeting_period"):
+        linked = events.loc[events.snapshot_id.isin(group.snapshot_id)].copy()
+        check = linked.drop(columns="index_date", errors="ignore").merge(
+            group[["snapshot_id", "patient_id", "index_date"]],
+            on="snapshot_id",
+            validate="many_to_one",
+            suffixes=("", "_score"),
+        )
+        if not check.patient_id.eq(check.patient_id_score).all():
+            raise ValueError("HCP event is linked to a different patient")
+        if (check.event_date > check.index_date).any() or (
+            check.available_date > check.index_date
+        ).any():
+            raise ValueError("HCP attribution includes unavailable or future events")
+        linked = linked.rename(columns={"hcp_id": "provider_id", "provider_specialty": "specialty"})
+        linked["role"] = np.where(
+            linked.event_type.str.startswith("pharmacy"), "prescriber", "visit"
+        )
+        specialties = config.get("relevant_specialties", ["sleep_medicine", "neurology"])
+        linked["is_relevant"] = linked.status.isin(["paid", "final"]) & (
+            linked.therapy_class.eq("conventional") | linked.specialty.isin(specialties)
+        )
+        linked = linked.drop_duplicates(["snapshot_id", "event_id"])
+        targeting, attribution = build_hcp_targeting_output(
+            group,
+            linked,
+            attribution_config=AttributionConfig(
+                method=config.get("attribution_rule", "most_recent_relevant_prescriber"),
+                date_col="event_date",
+                relevant_col="is_relevant",
+                role_col="role",
+                specialist_specialties=tuple(specialties),
+            ),
+            opportunity_config=OpportunityConfig(
+                high_propensity_threshold=None,
+                high_propensity_threshold_percentile=config.get(
+                    "high_propensity_threshold_percentile", 90
+                ),
+            ),
+            scoring_config=HCPScoringConfig(
+                weights=config.get("weights", {"expected_switchers": 1.0}),
+                normalization=config.get("normalization", "none"),
+            ),
+        )
+        targeting["targeting_period"] = targeting_period
+        attribution = attribution.merge(
+            group[["snapshot_id", "patient_id"]], on="patient_id", validate="one_to_one"
+        )
+        attribution["targeting_period"] = targeting_period
+        targeting_frames.append(targeting)
+        attribution_frames.append(attribution)
+    return pd.concat(targeting_frames, ignore_index=True), pd.concat(
+        attribution_frames, ignore_index=True
+    )
+
+
 # Concise aliases for orchestration and backwards-compatible naming.
 attribute_patients = attribute_patients_to_hcp
 aggregate_hcp_opportunity = calculate_hcp_opportunity_metrics

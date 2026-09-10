@@ -1,0 +1,4 @@
+# Preserve the exact frozen study recipe bytes used by its published SHA-256.
+docs/neural_study/frozen_recipe.json -text whitespace=cr-at-eol
+# Preserve the new patient-study recipe and companion hash as canonical LF JSON.
+docs/patient_study/*.json text eol=lf

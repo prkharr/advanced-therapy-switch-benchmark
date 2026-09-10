@@ -1,67 +1,131 @@
-from __future__ import annotations
+from copy import deepcopy
+from dataclasses import replace
 
 import pandas as pd
 import pytest
 
-from therapy_switch.data import build_cohort, generate_synthetic_claims
-from therapy_switch.features import (
-    LeakageError,
-    assert_no_post_index_events,
-    audit_feature_frame,
-    build_tabular_features,
+from therapy_switch.data.event_sequences import build_event_frame
+from therapy_switch.data.prepared_input_adapter import (
+    load_prepared_inputs,
+    validate_prepared_inputs,
 )
+from therapy_switch.features import build_tabular_features
+from therapy_switch.features.leakage import LeakageError, validate_predictor_names
 
 
-@pytest.fixture(scope="module")
-def leakage_data():
-    config = {
-        "data": {"synthetic": {"n_patients": 55, "target_prevalence": 0.1}},
-        "project": {"random_seed": 5},
-        "timeline": {"observation_window_days": 365, "prediction_window_days": 90},
-        "therapy_mapping": {
-            "conventional": ["CONV_A", "CONV_B"],
-            "advanced": ["ADV_A"],
-        },
-    }
-    tables = generate_synthetic_claims(config)
-    cohort = build_cohort(tables, config)
-    return config, tables, cohort
-
-
-def test_post_index_claims_do_not_change_features(leakage_data) -> None:
-    config, tables, cohort = leakage_data
-    expected = build_tabular_features(tables, cohort, config)
-    future = cohort[["patient_id", "index_date"]].copy()
-    future["claim_id"] = [f"FUTURE{i:05d}" for i in range(len(future))]
-    future["claim_date"] = future["index_date"] + pd.Timedelta(days=10)
-    future["diagnosis_code"] = "DX_SEVERE"
-    future["procedure_code"] = "PROC_INFUSION_EVAL"
-    future["provider_id"] = tables["providers"].iloc[0]["provider_id"]
-    future["place_of_service"] = "inpatient"
-    future = future[tables["medical_claims"].columns]
-    mutated = {name: frame.copy() for name, frame in tables.items()}
-    mutated["medical_claims"] = pd.concat([mutated["medical_claims"], future], ignore_index=True)
-    actual = build_tabular_features(mutated, cohort, config)
-    pd.testing.assert_frame_equal(actual, expected)
-
-
-def test_post_index_event_audit_raises(leakage_data) -> None:
-    _, _, cohort = leakage_data
-    event = pd.DataFrame(
-        {
-            "patient_id": [cohort.iloc[0]["patient_id"]],
-            "event_date": [cohort.iloc[0]["index_date"] + pd.Timedelta(days=1)],
-        }
-    )
-    with pytest.raises(LeakageError, match="post-index"):
-        assert_no_post_index_events(event, cohort, date_col="event_date")
-
-
-def test_structural_audit_rejects_outcome_features(leakage_data) -> None:
-    _, tables, cohort = leakage_data
-    features = build_tabular_features(tables, cohort, {})
-    features["future_advanced_therapy"] = cohort["label"].to_numpy()
-    report = audit_feature_frame(features, cohort, raise_on_error=False)
-    assert "forbidden_feature_name" in set(report["check"])
+@pytest.mark.parametrize(
+    "column",
+    [
+        "RESP",
+        "OUTCOME_DATE",
+        "future_rx",
+        "post_index_cost",
+        "label_rate",
+        "patient_id",
+        "snapshot_id",
+        "split",
+        "target_encoding",
+        "hcp_id",
+        "cohort_id",
+    ],
+)
+def test_target_and_identifier_predictors_are_forbidden(column):
     with pytest.raises(LeakageError):
-        audit_feature_frame(features, cohort)
+        validate_predictor_names(["age", column])
+
+
+def test_future_and_late_claims_cannot_change_predictors_or_sequences(prepared_data):
+    config, tables, inputs = prepared_data
+    snapshot = inputs.snapshots.iloc[:1]
+    index = snapshot.index_date.iloc[0]
+    changed = {key: frame.copy() for key, frame in tables.items()}
+    med = changed["medical_claims"]
+    rx = changed["pharmacy_claims"]
+    for frame, date_col in ((med, "claim_date"), (rx, "fill_date")):
+        future = frame[date_col].gt(index) | frame.available_date.gt(index)
+        frame.loc[future, "patient_cost"] = 9e8
+        frame.loc[future, "status"] = "rejected"
+    med.loc[med.claim_date.gt(index), "diagnosis_code"] = "FUTURE_INFORMATION"
+    rx.loc[rx.fill_date.gt(index), "therapy_class"] = "advanced"
+    expected = build_tabular_features(tables, snapshot, config)
+    actual = build_tabular_features(changed, snapshot, config)
+    pd.testing.assert_frame_equal(expected, actual)
+    pd.testing.assert_frame_equal(
+        build_event_frame(tables, snapshot, config), build_event_frame(changed, snapshot, config)
+    )
+
+
+def test_relabeling_cannot_change_features(prepared_data):
+    config, tables, inputs = prepared_data
+    snapshots = inputs.snapshots.iloc[:3].copy()
+    other = snapshots.assign(
+        label=1 - snapshots.label, resp=1 - snapshots.resp, outcome_date=pd.NaT
+    )
+    pd.testing.assert_frame_equal(
+        build_tabular_features(tables, snapshots, config),
+        build_tabular_features(tables, other, config),
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "future_event",
+        "late_arrival",
+        "orphan",
+        "different_patient",
+        "extra_predictor",
+        "outcome_outside",
+        "immature",
+        "missing_date",
+        "wrong_lag",
+        "duplicate_event",
+        "unreviewed_feature",
+        "future_wide",
+    ],
+)
+def test_prepared_contract_fails_closed(prepared_data, prepared_config, mutation):
+    _, _, original = prepared_data
+    frames = {name: getattr(original, name).copy() for name in ("snapshots", "wide", "events")}
+    config = deepcopy(prepared_config)
+    index = frames["snapshots"].set_index("snapshot_id").index_date
+    sid = frames["events"].snapshot_id.iloc[0]
+    if mutation == "future_event":
+        frames["events"].loc[0, "event_date"] = index[sid] + pd.Timedelta(days=1)
+    elif mutation == "late_arrival":
+        frames["events"].loc[0, "available_date"] = index[sid] + pd.Timedelta(days=1)
+    elif mutation == "orphan":
+        frames["events"].loc[0, "snapshot_id"] = "unknown"
+    elif mutation == "different_patient":
+        frames["events"].loc[0, "patient_id"] = "different"
+    elif mutation == "extra_predictor":
+        frames["wide"]["unapproved"] = 1
+    elif mutation == "outcome_outside":
+        row = frames["snapshots"].index[frames["snapshots"].label.eq(1)][0]
+        frames["snapshots"].loc[row, "outcome_date"] = frames["snapshots"].loc[row, "index_date"]
+    elif mutation == "immature":
+        frames["snapshots"]["label_available_date"] = pd.Timestamp("2099-01-01")
+    elif mutation == "missing_date":
+        frames["snapshots"].loc[0, "feature_cutoff"] = pd.NaT
+    elif mutation == "wrong_lag":
+        frames["snapshots"]["feature_cutoff"] = frames["snapshots"].index_date
+    elif mutation == "duplicate_event":
+        frames["events"] = pd.concat(
+            [frames["events"], frames["events"].iloc[:1]], ignore_index=True
+        )
+    elif mutation == "unreviewed_feature":
+        config["data"]["feature_lineage"] = {}
+    else:
+        frames["wide"]["feature_as_of"] = pd.Timestamp("2099-01-01")
+    with pytest.raises((ValueError, LeakageError)):
+        load_prepared_inputs(frames, config)
+
+
+def test_direct_prepared_validation_rejects_nat(prepared_data):
+    config, _, original = prepared_data
+    snapshots = original.snapshots.copy()
+    snapshots.loc[0, "start_dt"] = pd.NaT
+    with pytest.raises(ValueError):
+        validate_prepared_inputs(
+            replace(original, snapshots=snapshots), config, require_lineage=False
+        )

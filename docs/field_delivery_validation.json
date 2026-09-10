@@ -1,0 +1,66 @@
+{
+  "scope": "Synthetic local execution and compatibility verification, not a model superiority study",
+  "assessment_date": "2024-12-01",
+  "raw_tables": {
+    "enrollment": 1200,
+    "medical_claims": 37072,
+    "patients": 1200,
+    "pharmacy_claims": 23099,
+    "plans": 3,
+    "providers": 100,
+    "therapy_mapping": 5
+  },
+  "source_fingerprint": "b2b7fc457aaa675fd71ed19b5c4ea67ca6d347061cd37d4170d63514b9d731f4",
+  "experimental_neural": {
+    "eligible_patients": 253,
+    "priority_patients": 26,
+    "hcp_targets": 20,
+    "attribution_coverage": {
+      "attributed_patients": 253,
+      "eligible_patients": 253,
+      "exported_priority_patients": 26,
+      "priority_patients": 26,
+      "unattributed_patients": 0,
+      "unattributed_priority_patients": 0,
+      "withheld_priority_patients": 0
+    }
+  },
+  "logistic_reference": {
+    "eligible_patients": 253,
+    "priority_patients": 26,
+    "hcp_targets": 18,
+    "model_evidence": "reference"
+  },
+  "checks": {
+    "raw_csv_matches_direct_generation": true,
+    "saved_model_scores_exactly_match": true,
+    "score_mode_does_not_train": true,
+    "model_replacement_uses_same_orchestrator": true,
+    "local_tests_passed": 142,
+    "lint_passed": true,
+    "installed_command_exit_code": 0,
+    "installed_command_exact_replay": true
+  },
+  "browser": {
+    "rows": 20,
+    "eligible_patients": 253,
+    "priority_patients": 26,
+    "external_network_requests": 0,
+    "javascript_errors": 0,
+    "specialty_filter_count": 3,
+    "exact_search_count": 1,
+    "csv_download_lines": 2,
+    "csv_bom": true,
+    "sorting_verified": true,
+    "no_match_state": true,
+    "mobile_page_overflow": false,
+    "javascript_disabled_rows": 20,
+    "final_report_rechecked": true
+  },
+  "external_connections": false,
+  "environment_verification": "NOT VERIFIED IN SENTINEL",
+  "model_promotion": "No statistically confirmed winner; the neural default remains experimental",
+  "patient_study_revision": "649ac654ed1d9f4178c2a5ffb598a154e4bfb83c",
+  "execution_revision": "d889cf0841ad586289bf4e37d2db5a24b01fbbfe",
+  "installed_command_source_fingerprint": "b22a668cee3c70d5855f8c392f20d1912778173780e82588fb56be6e47bb9031"
+}

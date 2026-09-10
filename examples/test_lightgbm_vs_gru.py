@@ -21,7 +21,6 @@ from tempfile import TemporaryDirectory
 from therapy_switch.config import load_config
 from therapy_switch.pipeline import run_pipeline
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -53,9 +52,7 @@ def build_test_config(work_directory: Path) -> dict:
     config["data"]["synthetic"]["n_patients"] = 1_000
     config["models"]["lightgbm"]["n_estimators"] = 100
     config["models"]["gru"].update({"hidden_size": 32, "num_layers": 1})
-    config["models"]["sequence_training"].update(
-        {"max_epochs": 8, "patience": 2, "batch_size": 64}
-    )
+    config["models"]["sequence_training"].update({"max_epochs": 8, "patience": 2, "batch_size": 64})
     config["evaluation"]["bootstrap_iterations"] = 100
     config["visualizations"]["enabled"] = False
     config["explainability"]["enabled"] = False
@@ -84,15 +81,21 @@ def main() -> None:
                 "Status",
                 "PR-AUC",
                 "ROC-AUC",
-                "Lift at 10%",
-                "Recall at 10%",
-                "Training Time (s)",
+                "Lift@10%",
+                "Recall@10%",
+                "Training Time",
             ]
             if column in benchmark.columns
         ]
         print("\nLightGBM versus GRU test result")
-        print(benchmark.loc[benchmark["Model"].isin(["LightGBM", "GRU"]), columns].to_string(index=False))
-        print(f"\nEligible patients: {len(result.cohort):,}")
+        print(
+            benchmark.loc[benchmark["Model"].isin(["LightGBM", "GRU"]), columns].to_string(
+                index=False
+            )
+        )
+        print(
+            f"\nEligible patients: {result.cohort.patient_id.nunique():,}; snapshots: {len(result.cohort):,}"
+        )
         print(f"Positive-label rate: {result.cohort['label'].mean():.2%}")
         print(f"Temporary benchmark files: {experiment.output_dir}")
 

@@ -20,6 +20,10 @@ EXPECTED_MODELS = (
     "GRU",
     "BiLSTM",
     "Transformer",
+    "Hybrid GRU Wide",
+    "LightGBM Without Recency",
+    "GRU Without Time",
+    "GRU Shuffled Without Time",
 )
 
 MODEL_BENCHMARK_COLUMNS = [
@@ -34,6 +38,12 @@ MODEL_BENCHMARK_COLUMNS = [
     "Recall@10%",
     "Recall@20%",
     "Recall@30%",
+    "Precision@5%",
+    "Precision@10%",
+    "Precision@20%",
+    "TruePositives@5%",
+    "TruePositives@10%",
+    "TruePositives@20%",
     "Lift@5%",
     "Lift@10%",
     "Lift@20%",
@@ -85,6 +95,10 @@ DEFAULT_COMPLEXITY = {
     "GRU": "High",
     "BiLSTM": "High",
     "Transformer": "High",
+    "Hybrid GRU Wide": "High",
+    "LightGBM Without Recency": "Medium",
+    "GRU Without Time": "High",
+    "GRU Shuffled Without Time": "High",
 }
 
 
@@ -123,6 +137,11 @@ def benchmark_row(
         "Recall@10%": values.get("Recall@10%", np.nan),
         "Recall@20%": values.get("Recall@20%", np.nan),
         "Recall@30%": values.get("Recall@30%", np.nan),
+        **{
+            f"{metric}@{capacity}%": values.get(f"{metric}@{capacity}%", np.nan)
+            for metric in ("Precision", "TruePositives")
+            for capacity in (5, 10, 20)
+        },
         "Lift@5%": values.get("Lift@5%", np.nan),
         "Lift@10%": values.get("Lift@10%", np.nan),
         "Lift@20%": values.get("Lift@20%", np.nan),
@@ -134,7 +153,7 @@ def benchmark_row(
         "Reason": reason,
     }
     if normalized_status != "COMPLETED":
-        for column in MODEL_BENCHMARK_COLUMNS[2:18]:
+        for column in MODEL_BENCHMARK_COLUMNS[2:-2]:
             row[column] = np.nan
     return row
 
@@ -180,7 +199,7 @@ def build_model_benchmark(
         if row["Status"] != "COMPLETED" and not row["Reason"].strip():
             raise ValueError(f"{model} requires a failure/not-applicable reason.")
         if row["Status"] != "COMPLETED":
-            for column in MODEL_BENCHMARK_COLUMNS[2:18]:
+            for column in MODEL_BENCHMARK_COLUMNS[2:-2]:
                 row[column] = np.nan
         supplied[model] = row
 
