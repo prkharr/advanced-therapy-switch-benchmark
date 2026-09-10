@@ -29,7 +29,7 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Install benchmark dependencies
         if: matrix.profile == 'benchmark'
-        run: python -m pip install -e ".[benchmark]"
+        run: python -m pip install -e ".[benchmark]" "tabm==0.0.3"
       - name: Lint
         run: ruff check src tests
       - name: Test

@@ -84,6 +84,13 @@ def test_registry_contains_every_required_model_in_display_order() -> None:
         "lightgbm_wide",
         "gru_no_time",
         "gru_shuffled",
+        "tabm",
+        "realmlp",
+        "tabicl",
+        "residual_mlp",
+        "tabpfn",
+        "neural_ensemble",
+        "tabpfn_ensemble",
     ]
     assert [runner.model_name for runner in registry.values()] == [
         "Naive Baseline",
@@ -101,6 +108,13 @@ def test_registry_contains_every_required_model_in_display_order() -> None:
         "LightGBM Without Recency",
         "GRU Without Time",
         "GRU Shuffled Without Time",
+        "TabM",
+        "RealMLP",
+        "TabICL",
+        "Residual MLP",
+        "TabPFN",
+        "Neural Ensemble",
+        "TabPFN Neural Ensemble",
     ]
 
 

@@ -24,6 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 benchmark = ["lightgbm>=4.0", "torch>=2.0", "shap>=0.42"]
+research = ["scikit-learn>=1.5", "tabm>=0.0.3,<0.1", "pytabkit>=1.7.3,<2", "tabicl>=2.2,<3", "tabpfn>=8.5,<9"]
 snowflake = ["snowflake-snowpark-python>=1.14"]
 boosting = [
   "xgboost>=1.7",

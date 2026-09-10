@@ -4,7 +4,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
+from therapy_switch.models import model_registry
 from therapy_switch.pipeline import run_pipeline
 
 
@@ -42,7 +44,7 @@ def test_pipeline_outputs_reload_and_reproducibility(tmp_path, prepared_data, pr
         ):
             assert (output / filename).exists(), filename
         benchmark = pd.read_csv(output / "model_benchmark.csv")
-        assert len(benchmark) == 15
+        assert len(benchmark) == len(model_registry())
         assert benchmark.Status.eq("COMPLETED").sum() == 2
         assert not benchmark.Status.eq("FAILED").any()
         assert result.experiments["stratified"].recommendation.model == "Logistic Regression"
@@ -61,3 +63,44 @@ def test_pipeline_outputs_reload_and_reproducibility(tmp_path, prepared_data, pr
         pd.read_csv(runs[0].output_dir / "patient_propensity_scores.csv"),
         pd.read_csv(runs[1].output_dir / "patient_propensity_scores.csv"),
     )
+
+
+def test_optional_neural_ensemble_pipeline(tmp_path, prepared_data, prepared_config):
+    pytest.importorskip("tabm")
+    _, _, inputs = prepared_data
+    config = deepcopy(prepared_config)
+    config["splitting"]["experiments"] = ["stratified"]
+    config["splitting"]["primary_experiment"] = "stratified"
+    config["evaluation"]["bootstrap_iterations"] = 5
+    config["visualizations"]["enabled"] = False
+    config["explainability"]["enabled"] = False
+    config["project"]["output_dir"] = str(tmp_path / "outputs")
+    config["project"]["artifact_dir"] = str(tmp_path / "artifacts")
+    config["models"] = {
+        "neural_ensemble": {
+            "enabled": True,
+            "members": [
+                {
+                    "name": "small_tabm",
+                    "family": "tabm",
+                    "options": {
+                        "width": 16,
+                        "members": 4,
+                        "max_epochs": 2,
+                        "patience": 1,
+                    },
+                }
+            ],
+            "weights": [1.0],
+        }
+    }
+    frames = {name: getattr(inputs, name) for name in ("snapshots", "wide", "events")}
+    result = run_pipeline(config, tables=frames)
+    assert result.experiments["stratified"].recommendation.model == "Neural Ensemble"
+    metadata = json.loads(
+        (
+            tmp_path / "artifacts/experiments/stratified/models/neural_ensemble_metadata.json"
+        ).read_text()
+    )
+    assert metadata["reload_verified"]
+    assert (tmp_path / "outputs/hcp_targeting_output.csv").exists()

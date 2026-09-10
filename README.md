@@ -30,7 +30,11 @@ Quickstart uses 600 synthetic patients and shorter training. Default uses 3,000 
 
 The default executes logistic regression, synthetic LightGBM reference, MLP, GRU, temporal Transformer, hybrid GRU plus wide features, and a naive prevalence reference. Three additional runs remove recency features from LightGBM, remove timing from GRU, and shuffle a GRU sequence with timing removed. Random Forest, XGBoost, CatBoost, LSTM and BiLSTM remain configurable registry entries.
 
-All enabled models face identical retained snapshots. Preprocessing and vocabularies fit training data only. Validation average precision selects the candidate, neural stopping epoch and optional model parameters. Thresholds use validation data; calibration uses patient-disjoint validation folds. Test comparisons cannot change the selected candidate.
+Optional research models add TabM, RealMLP, residual MLP, local TabICL and TabPFN classifiers, and fixed neural ensembles. The [neural study](docs/neural_model_study.md) reports a 55-configuration search across three development cohorts and frozen confirmation on three independent synthetic cohorts. The [reproduction workflow](docs/neural_study_workflow.md) describes dependencies, local checkpoints, selection and statistical criteria. The [challenger configuration](configs/neural_challenger.yaml) runs the selected neural recipe alongside the original references.
+
+The frozen RealMLP/TabM/MLP ensemble achieved mean reserved-test AP **0.4079**, versus **0.3728** for the original LightGBM and **0.3578** for original logistic regression, passing the predefined AP criterion. It did not significantly beat tuned logistic regression, and its top-10% capture was lower than LightGBM's. These are synthetic, conditional comparisons; the report gives the full intervals and cohort results.
+
+All enabled models face identical retained snapshots. Preprocessing and vocabularies fit training data only. Validation selects models and optional parameters; neural stopping uses validation AP except the optional RealMLP interface, which uses validation cross-entropy. Thresholds use validation data; calibration uses patient-disjoint validation folds. Test comparisons cannot change the selected candidate.
 
 ## Data interfaces
 
@@ -55,6 +59,10 @@ Scores and HCP rankings support commercial analysis. They are associations, not 
 - [Data contract](docs/data_contract.md)
 - [Model card](docs/model_card.md)
 - [Project report](docs/TAK861_Advanced_Therapy_Switch_Project_Report.md)
+- [Neural search and confirmation results](docs/neural_model_study.md)
+- [Neural study reproduction](docs/neural_study_workflow.md)
 - [Focused LightGBM versus GRU example](examples/test_lightgbm_vs_gru.py)
 
 Run ruff check src tests and pytest -q for validation. Rebuild the Word report from its editable Markdown with python scripts/build_project_document.py. The implementation is an offline research workflow; production deployment is outside its scope.
+
+**Built with PriorLabs-TabPFN.** Optional TabPFN-v2 integration and benchmark trials use the [Prior Labs License 1.1](docs/licenses/TabPFN_LICENSE.txt). Pretrained weights are not included in this repository.

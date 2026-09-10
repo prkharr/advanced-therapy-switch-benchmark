@@ -1,0 +1,20 @@
+{
+  "python": "3.10.4",
+  "platform": "Windows",
+  "device": "CPU",
+  "packages": {
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "scipy": "1.15.3",
+    "joblib": "1.6.0",
+    "pyarrow": "25.0.1",
+    "scikit-learn": "1.7.2",
+    "torch": "2.14.0",
+    "lightgbm": "4.7.0",
+    "tabm": "0.0.3",
+    "rtdl_num_embeddings": "0.0.12",
+    "pytabkit": "1.7.3",
+    "tabicl": "2.2.0",
+    "tabpfn": "8.5.0"
+  }
+}

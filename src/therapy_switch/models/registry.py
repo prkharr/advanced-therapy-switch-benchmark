@@ -8,6 +8,15 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from .advanced_tabular import (
+    NeuralEnsembleRunner,
+    RealMLPRunner,
+    ResidualMLPRunner,
+    TabICLRunner,
+    TabMRunner,
+    TabPFNEnsembleRunner,
+    TabPFNRunner,
+)
 from .classical import (
     BaseModelRunner,
     CatBoostRunner,
@@ -59,6 +68,13 @@ RUNNER_TYPES: tuple[type[BaseModelRunner], ...] = (
     LightGBMWideRunner,
     GRUNoTimeRunner,
     GRUShuffledRunner,
+    TabMRunner,
+    RealMLPRunner,
+    TabICLRunner,
+    ResidualMLPRunner,
+    TabPFNRunner,
+    NeuralEnsembleRunner,
+    TabPFNEnsembleRunner,
 )
 
 

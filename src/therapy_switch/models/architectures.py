@@ -82,6 +82,27 @@ if TORCH_AVAILABLE:
         def forward(self, values: "torch.Tensor") -> "torch.Tensor":
             return self.network(values).squeeze(-1)
 
+    class ResidualTabularMLP(nn.Module):
+        """Nonlinear correction around a frozen training-fitted linear logit."""
+
+        def __init__(self, input_dim, width=64, blocks=2, dropout=0.1):
+            super().__init__()
+            self.linear = nn.Linear(input_dim, 1)
+            self.linear.requires_grad_(False)
+            layers = []
+            previous = input_dim
+            for _ in range(blocks):
+                layers.extend([nn.Linear(previous, width), nn.GELU(), nn.Dropout(dropout)])
+                previous = width
+            output = nn.Linear(previous, 1)
+            nn.init.zeros_(output.weight)
+            nn.init.zeros_(output.bias)
+            layers.append(output)
+            self.correction = nn.Sequential(*layers)
+
+        def forward(self, values):
+            return (self.linear(values) + self.correction(values)).unsqueeze(1)
+
     class EventEmbedding(nn.Module):
         def __init__(self, input_dim, d_model, categorical_sizes=()):
             super().__init__()
@@ -225,6 +246,7 @@ else:
         def __init__(self, *args, **kwargs):
             raise ImportError("PyTorch is required for neural models")
 
+    ResidualTabularMLP = _TorchRequired
     FocalLoss = TabularMLP = RecurrentSequenceClassifier = TemporalTransformerClassifier = (
         HybridSequenceClassifier
     ) = _TorchRequired
