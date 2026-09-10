@@ -1,0 +1,301 @@
+{
+  "version": 1,
+  "protocol": {
+    "primary": "Recall among the top 10% of distinct eligible patients, using the latest supplied eligible snapshot per patient",
+    "selection": "Development validation only; mean recall first, mean AP tie break",
+    "development_seeds": [
+      42,
+      43,
+      44
+    ],
+    "fresh_confirmation_seeds": [
+      9101,
+      9102,
+      9103,
+      9104,
+      9105
+    ],
+    "synthetic_generator": "unchanged",
+    "capacity": 0.1,
+    "material_gain": 0.03,
+    "bootstrap_draws": 3000,
+    "baseline_controls": [
+      "original LightGBM",
+      "original logistic",
+      "previous frozen neural ensemble"
+    ],
+    "family_alpha": 0.05,
+    "scope": "Synthetic historical assessments; not live eligibility or real patient performance"
+  },
+  "selected": {
+    "members": [
+      {
+        "name": "rank_mlp_True_1.0",
+        "family": "rank_mlp",
+        "options": {
+          "rank_weight": 1.0,
+          "max_epochs": 60,
+          "patience": 12,
+          "width": 64
+        },
+        "history": true,
+        "latest_only": true
+      },
+      {
+        "name": "rank_mlp_False_0.0",
+        "family": "rank_mlp",
+        "options": {
+          "rank_weight": 0.0,
+          "max_epochs": 60,
+          "patience": 12,
+          "width": 64
+        },
+        "history": false,
+        "latest_only": true
+      }
+    ],
+    "weights": [
+      0.75,
+      0.25
+    ],
+    "development_metrics": {
+      "42": {
+        "recall": 0.5,
+        "ap": 0.446832121444094
+      },
+      "43": {
+        "recall": 0.4594594594594595,
+        "ap": 0.4619784599059209
+      },
+      "44": {
+        "recall": 0.5128205128205128,
+        "ap": 0.509753115583809
+      }
+    },
+    "mean_recall": 0.4907599907599907,
+    "mean_ap": 0.4728545656446079
+  },
+  "controls": {
+    "original_lightgbm": {
+      "members": [
+        {
+          "name": "lightgbm_reference",
+          "family": "lightgbm",
+          "options": {
+            "n_estimators": 250,
+            "num_leaves": 15,
+            "learning_rate": 0.04,
+            "min_child_samples": 40
+          },
+          "reuse_legacy": true
+        }
+      ],
+      "weights": [
+        1.0
+      ]
+    },
+    "original_logistic": {
+      "members": [
+        {
+          "name": "logistic_reference",
+          "family": "logistic_regression",
+          "options": {
+            "C": 0.2,
+            "max_iter": 1000,
+            "class_weight": "balanced"
+          },
+          "reuse_legacy": true
+        }
+      ],
+      "weights": [
+        1.0
+      ]
+    },
+    "previous_neural": {
+      "members": [
+        {
+          "name": "realmlp_3",
+          "family": "realmlp",
+          "options": {
+            "feature_count": null,
+            "options": {
+              "n_epochs": 128,
+              "hidden_sizes": [
+                128,
+                128,
+                128
+              ],
+              "lr": 0.02
+            }
+          },
+          "reuse_legacy": true
+        },
+        {
+          "name": "realmlp_0",
+          "family": "realmlp",
+          "options": {
+            "feature_count": null,
+            "options": {
+              "n_epochs": 128,
+              "hidden_sizes": [
+                128,
+                128,
+                128
+              ],
+              "lr": 0.04
+            }
+          },
+          "reuse_legacy": true
+        },
+        {
+          "name": "realmlp_1",
+          "family": "realmlp",
+          "options": {
+            "feature_count": null,
+            "options": {
+              "n_epochs": 128,
+              "hidden_sizes": [
+                64,
+                64,
+                64
+              ],
+              "lr": 0.04
+            }
+          },
+          "reuse_legacy": true
+        },
+        {
+          "name": "tabm_08",
+          "family": "tabm",
+          "options": {
+            "normalization": "quantile",
+            "feature_count": null,
+            "width": 64,
+            "blocks": 2,
+            "dropout": 0.1,
+            "weight_power": 0,
+            "bins": 16,
+            "members": 16,
+            "max_epochs": 120,
+            "patience": 16,
+            "batch_size": 256,
+            "num_threads": 2
+          },
+          "reuse_legacy": true
+        },
+        {
+          "name": "mlp_tuned_2",
+          "family": "mlp",
+          "options": {
+            "hidden_dims": [
+              128,
+              64
+            ],
+            "dropout": 0.3,
+            "weight_decay": 0.001,
+            "losses": [
+              "bce"
+            ],
+            "max_epochs": 100,
+            "patience": 15,
+            "num_threads": 2
+          },
+          "reuse_legacy": true
+        }
+      ],
+      "weights": [
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2
+      ]
+    },
+    "tuned_classical": {
+      "members": [
+        {
+          "name": "cat_wide_all_d5",
+          "family": "catboost",
+          "options": {
+            "depth": 5,
+            "l2_leaf_reg": 20,
+            "iterations": 600
+          },
+          "history": false,
+          "latest_only": false
+        }
+      ],
+      "weights": [
+        1.0
+      ]
+    },
+    "best_ehr": {
+      "members": [
+        {
+          "name": "ehr_hybridTrue_pre0",
+          "family": "ehr_transformer",
+          "options": {
+            "pretrain_epochs": 0,
+            "max_epochs": 40,
+            "patience": 10,
+            "max_length": 64,
+            "width": 64,
+            "batch_size": 64,
+            "hybrid": true
+          },
+          "history": true,
+          "latest_only": true
+        }
+      ],
+      "weights": [
+        1.0
+      ]
+    }
+  },
+  "primary_references": [
+    "original_lightgbm",
+    "original_logistic",
+    "previous_neural"
+  ],
+  "secondary_controls": [
+    "tuned_classical",
+    "best_ehr"
+  ],
+  "candidate_count": 98,
+  "proposal_count": 1639,
+  "candidate_bank_sha256": "8b876608b72da2de59b903b7f99cccaa783ab33b823390a22efc532bcf9a9152",
+  "implementation": "21015fce6016cbb38cb6e3fe78d9cd1e63e896e2b1b0c608e5a0e1ad25e33c75",
+  "source_fingerprint": "f4b64939215c271422320934b9a2e2963775241adb2e879a2cc40eca10216730",
+  "runtime_versions": {
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "scipy": "1.15.3",
+    "joblib": "1.6.0",
+    "pyarrow": "25.0.1",
+    "scikit-learn": "1.7.2",
+    "torch": "2.14.0",
+    "lightgbm": "4.7.0",
+    "tabm": "0.0.3",
+    "rtdl_num_embeddings": "0.0.12",
+    "pytabkit": "1.7.3",
+    "tabicl": "2.2.0",
+    "tabpfn": "8.5.0",
+    "catboost": "1.2.10",
+    "xgboost": "3.2.0"
+  },
+  "dataset_manifests": {
+    "42": "68fecb9f34a865ef32f1ed07499fd60f24d88be0218d4c957e19f19fe41b4fc1",
+    "43": "81609fb93fc0207c9b9f96cb3dd6846248f17c7eb3ba2014492a2c79254ddce9",
+    "44": "829e61a182bf2a20eb93492715c76745ed5d325e700020c375aacf72ca99715c",
+    "9101": "b5cb8515ad21f52ea5144e171c159b612b53bc5a818136320afd932dbb126f94",
+    "9102": "e7613bb2ffd914f26ab85ded7353b6bc6f41ebed6456684d07b2f98ca71a1762",
+    "9103": "764d11269e53a848b9e934a7c9d2fa47646daf7112959356e8c611ba72405762",
+    "9104": "68ed7f1f0f9f33e4be519e833bb2f656ea395a8cbd29dff70f3fbd1b50228a22",
+    "9105": "5edbf68703f6c8c12bbc2e01b6901e2a73ab0c54bc839bda1b8ecaf9facb67b3"
+  },
+  "checkpoints": {
+    "work/model_cache/tabicl/tabicl-classifier-v2-20260212.ckpt": "bdc7dbd5e4ff21f8f0456fcf90c6b7cdf72dbea960f2d05b19bec19f9b3d4ed0",
+    "work/model_cache/tabpfn/tabpfn-v2-classifier-v2_default.ckpt": "cf8c519c01eaf1613ee91239006d57b1c806ff5f23ac1aeb1315ba1015210e49"
+  },
+  "previous_neural_recipe_sha256": "4935c539d91f91ead8db44f9cad560cca79284732694042388ce56207d0a7e91"
+}

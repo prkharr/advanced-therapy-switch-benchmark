@@ -1,0 +1,27 @@
+{
+  "primary": "Recall among the top 10% of distinct eligible patients, using the latest supplied eligible snapshot per patient",
+  "selection": "Development validation only; mean recall first, mean AP tie break",
+  "development_seeds": [
+    42,
+    43,
+    44
+  ],
+  "fresh_confirmation_seeds": [
+    9101,
+    9102,
+    9103,
+    9104,
+    9105
+  ],
+  "synthetic_generator": "unchanged",
+  "capacity": 0.1,
+  "material_gain": 0.03,
+  "bootstrap_draws": 3000,
+  "baseline_controls": [
+    "original LightGBM",
+    "original logistic",
+    "previous frozen neural ensemble"
+  ],
+  "family_alpha": 0.05,
+  "scope": "Synthetic historical assessments; not live eligibility or real patient performance"
+}

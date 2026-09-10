@@ -34,7 +34,17 @@ Optional research models add TabM, RealMLP, residual MLP, local TabICL and TabPF
 
 The frozen RealMLP/TabM/MLP ensemble achieved mean reserved-test AP **0.4079**, versus **0.3728** for the original LightGBM and **0.3578** for original logistic regression, passing the predefined AP criterion. It did not significantly beat tuned logistic regression, and its top-10% capture was lower than LightGBM's. These are synthetic, conditional comparisons; the report gives the full intervals and cohort results.
 
-All enabled models face identical retained snapshots. Preprocessing and vocabularies fit training data only. Validation selects models and optional parameters; neural stopping uses validation AP except the optional RealMLP interface, which uses validation cross-entropy. Thresholds use validation data; calibration uses patient-disjoint validation folds. Test comparisons cannot change the selected candidate.
+In the original snapshot benchmark, all enabled models face identical retained snapshots. Preprocessing and vocabularies fit training data only. Validation selects models and optional parameters; neural stopping uses validation AP except the optional RealMLP interface, which uses validation cross-entropy. Thresholds use validation data; calibration uses patient-disjoint validation folds. Test comparisons cannot change the selected candidate.
+
+## Patient lists at 10% capacity
+
+The [patient capture study](docs/patient_capture_study.md) targets the future switchers captured in the top 10% of **distinct eligible patients**. It evaluates 98 configurations across three development cohorts, then freezes one recipe before confirmation on five fresh synthetic cohorts. The search includes added claims-history features, latest-assessment training, CatBoost, XGBoost, LambdaRank, neural ranking losses, EHR transformers with local masked-event pretraining, reverse-time attention and mixed ensembles.
+
+The validation-selected recipe combines two neural networks, with 75% weight on a history-enhanced ranking model and 25% on a model using the original wide features. The report gives the complete fresh-cohort results, adjusted uncertainty and promotion criterion. The EHR implementations are explicitly Med-BERT/BEHRT-inspired; the original medical checkpoints were not used.
+
+On five fresh synthetic test cohorts, the candidate captured **141/325 switchers**, compared with **138/325** for LightGBM and **126/325** for logistic regression, at the same 286 list places. Mean cohort recall was 43.9%, 42.9% and 39.0%, respectively. The improvement was **not statistically confirmed**; the candidate remains experimental because the prespecified improvement gate failed.
+
+Use `therapy-switch-patients` or `python -m therapy_switch.patient_study` to prepare, search, freeze, confirm, refit a fixed recipe and write the ranked and selected patient lists. The [reproduction and scoring workflow](docs/patient_study_workflow.md) includes exact commands and input requirements. Establish current eligibility upstream: a patient's latest historical assessment alone does not prove eligibility today.
 
 ## Data interfaces
 
@@ -50,7 +60,7 @@ Results are written under the configured output directory; trained models and ca
 
 Outputs include all-model metrics, executive comparison, same-capacity capture and lift, additional true positives against LightGBM, clustered intervals, calibration, gains/deciles, held-out patient scores, period-specific HCP outputs, SHAP or fallback tabular explanations and sequence code-occlusion sensitivity. Artifacts include split manifests, vocabulary, training histories, fitted preprocessors/models, selected calibration, reload checks and source/input hashes.
 
-Scores and HCP rankings support commercial analysis. They are associations, not clinical recommendations or causal effects. Reported evaluation capacity counts snapshot opportunities; HCP aggregation first retains the latest patient snapshot per targeting period.
+Scores and HCP rankings support commercial analysis. They are associations, not clinical recommendations or causal effects. The original benchmark counts snapshot opportunities; the patient-list study counts distinct patients. HCP aggregation retains the latest patient snapshot per targeting period. Patient-list ranking scores are not calibrated expected-switcher counts.
 
 ## Technical documentation
 
@@ -61,6 +71,8 @@ Scores and HCP rankings support commercial analysis. They are associations, not 
 - [Project report](docs/TAK861_Advanced_Therapy_Switch_Project_Report.md)
 - [Neural search and confirmation results](docs/neural_model_study.md)
 - [Neural study reproduction](docs/neural_study_workflow.md)
+- [Patient capture results](docs/patient_capture_study.md)
+- [Patient-list reproduction and scoring](docs/patient_study_workflow.md)
 - [Focused LightGBM versus GRU example](examples/test_lightgbm_vs_gru.py)
 
 Run ruff check src tests and pytest -q for validation. Rebuild the Word report from its editable Markdown with python scripts/build_project_document.py. The implementation is an offline research workflow; production deployment is outside its scope.
