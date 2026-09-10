@@ -148,10 +148,8 @@ def therapy_definition(config: Any) -> TherapyDefinition:
         )
         if explicit_classes:
             classes = explicit_classes
-        if not classes:
+        if section is None and not classes:
             classes = (default_class,)
-        if not drug_ids:
-            drug_ids = default_drugs
         return drug_ids, classes
 
     conventional_ids, conventional_classes = resolve(

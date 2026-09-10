@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import platform
 import subprocess
 import sys
@@ -60,7 +61,7 @@ def build_run_manifest(
     split_frames: Mapping[str, pd.DataFrame] | None = None,
     workspace: str | Path = ".",
 ) -> dict[str, Any]:
-    """Build a PHI-safe manifest containing counts, settings, and code state."""
+    """Build local run provenance; configuration may contain governed mappings."""
 
     workspace_path = Path(workspace).resolve()
     labels = cohort["label"] if "label" in cohort else pd.Series(dtype=int)
@@ -68,8 +69,9 @@ def build_run_manifest(
     for name, frame in (split_frames or {}).items():
         split_labels = frame["label"] if "label" in frame else pd.Series(dtype=int)
         split_summary[name] = {
+            "snapshots": len(frame),
             "patients": int(frame["patient_id"].nunique()) if "patient_id" in frame else len(frame),
-            "positive_patients": int(split_labels.sum()) if len(split_labels) else None,
+            "positive_snapshots": int(split_labels.sum()) if len(split_labels) else None,
             "prevalence": float(split_labels.mean()) if len(split_labels) else None,
             "index_date_min": (
                 pd.to_datetime(frame["index_date"]).min()
@@ -82,18 +84,31 @@ def build_run_manifest(
                 else None
             ),
         }
+    code_digest = hashlib.sha256()
+    for source in sorted((workspace_path / "src").rglob("*.py")):
+        code_digest.update(source.relative_to(workspace_path).as_posix().encode())
+        code_digest.update(source.read_bytes())
+    input_hashes = {
+        name: hashlib.sha256(
+            pd.util.hash_pandas_object(frame, index=False).values.tobytes()
+        ).hexdigest()
+        for name, frame in tables.items()
+    }
     configuration = {key: value for key, value in config.items() if not str(key).startswith("_")}
     return {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "experiment": experiment,
         "configuration": configuration,
+        "source_tree_sha256": code_digest.hexdigest(),
+        "input_content_sha256": input_hashes,
         "table_row_counts": {name: int(len(frame)) for name, frame in tables.items()},
         "cohort": {
+            "snapshots": len(cohort),
             "patients": int(cohort["patient_id"].nunique())
             if "patient_id" in cohort
             else len(cohort),
-            "positive_patients": int(labels.sum()) if len(labels) else None,
-            "negative_patients": int((1 - labels).sum()) if len(labels) else None,
+            "positive_snapshots": int(labels.sum()) if len(labels) else None,
+            "negative_snapshots": int((1 - labels).sum()) if len(labels) else None,
             "prevalence": float(labels.mean()) if len(labels) else None,
         },
         "splits": split_summary,

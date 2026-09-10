@@ -340,7 +340,7 @@ class RandomForestRunner(TabularEstimatorRunner):
         defaults = {
             "n_estimators": 200,
             "class_weight": "balanced_subsample",
-            "n_jobs": -1,
+            "n_jobs": 2,
             "random_state": random_state,
             "min_samples_leaf": 2,
         }
@@ -379,7 +379,7 @@ class XGBoostRunner(TabularEstimatorRunner):
             "scale_pos_weight": class_ratio,
             "eval_metric": "aucpr",
             "tree_method": "hist",
-            "n_jobs": -1,
+            "n_jobs": 2,
             "random_state": random_state,
         }
         if not for_tuning:
@@ -427,9 +427,12 @@ class LightGBMRunner(TabularEstimatorRunner):
             "subsample": 0.85,
             "colsample_bytree": 0.85,
             "scale_pos_weight": class_ratio,
-            "n_jobs": -1,
+            "n_jobs": 2,
             "random_state": random_state,
             "verbosity": -1,
+            "metric": "average_precision",
+            "deterministic": True,
+            "force_col_wise": True,
         }
         defaults.update(params)
         return lightgbm.LGBMClassifier(**defaults)
@@ -450,7 +453,9 @@ class LightGBMRunner(TabularEstimatorRunner):
             eval_set=[(X_val, y_val)],
             eval_metric="average_precision",
             callbacks=[
-                lightgbm.early_stopping(early_stopping_rounds, verbose=False),
+                lightgbm.early_stopping(
+                    early_stopping_rounds, first_metric_only=True, verbose=False
+                ),
                 lightgbm.log_evaluation(period=0),
             ],
         )

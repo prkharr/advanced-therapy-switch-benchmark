@@ -12,7 +12,7 @@ from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
-from sklearn.inspection import permutation_importance
+from sklearn.metrics import average_precision_score
 
 NON_CAUSAL_DISCLAIMER = (
     "Attributions describe predictive associations in this model and dataset; "
@@ -212,16 +212,28 @@ def _permutation_fallback(
             feature_importance=pd.DataFrame(columns=IMPORTANCE_COLUMNS),
         )
     try:
-        result = permutation_importance(
-            model,
-            X,
-            np.asarray(y),
-            scoring="average_precision",
-            n_repeats=n_repeats,
-            random_state=random_state,
-            n_jobs=1,
-        )
-        values = np.asarray(result.importances_mean, dtype=float)
+        if n_repeats < 1:
+            raise ValueError("n_repeats must be positive")
+        target = np.asarray(y)
+        if np.unique(target).size != 2:
+            raise ValueError("Permutation AP requires both outcome classes")
+        baseline = average_precision_score(target, model.predict_proba(X)[:, 1])
+        rng = np.random.default_rng(random_state)
+        deltas = np.empty((len(names), n_repeats))
+        for column in range(len(names)):
+            for repeat in range(n_repeats):
+                altered = X.copy()
+                order = rng.permutation(len(X))
+                if isinstance(altered, pd.DataFrame):
+                    altered.iloc[:, column] = X.iloc[order, column].to_numpy()
+                else:
+                    altered[:, column] = X[order, column]
+                deltas[column, repeat] = baseline - average_precision_score(
+                    target, model.predict_proba(altered)[:, 1]
+                )
+        values = deltas.mean(axis=1)
+        importance = _importance_frame(names, np.maximum(values, 0), None)
+        importance["permutation_ap_drop"] = importance.feature.map(dict(zip(names, values)))
         return ExplanationResult(
             status="COMPLETED",
             method="permutation_importance_pr_auc",
@@ -231,7 +243,7 @@ def _permutation_fallback(
             ),
             # A negative permutation delta does not mean a negative patient-level
             # association, so do not label it as a signed clinical driver.
-            feature_importance=_importance_frame(names, np.abs(values), None),
+            feature_importance=importance,
         )
     except Exception as exc:
         return ExplanationResult(
@@ -254,6 +266,12 @@ def explain_model(
     random_state: int = 42,
 ) -> ExplanationResult:
     """Explain a fitted model using SHAP, native, then permutation importance."""
+
+    if hasattr(model, "named_steps") and "preprocessor" in model.named_steps:
+        preprocessor = model.named_steps["preprocessor"]
+        X = preprocessor.transform(X)
+        feature_names = preprocessor.get_feature_names_out().tolist()
+        model = model.named_steps["model"]
 
     shape = getattr(X, "shape", None)
     if shape is None or len(shape) != 2:

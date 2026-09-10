@@ -80,6 +80,10 @@ def test_registry_contains_every_required_model_in_display_order() -> None:
         "gru",
         "bilstm",
         "transformer",
+        "hybrid",
+        "lightgbm_wide",
+        "gru_no_time",
+        "gru_shuffled",
     ]
     assert [runner.model_name for runner in registry.values()] == [
         "Naive Baseline",
@@ -93,6 +97,10 @@ def test_registry_contains_every_required_model_in_display_order() -> None:
         "GRU",
         "BiLSTM",
         "Transformer",
+        "Hybrid GRU Wide",
+        "LightGBM Without Recency",
+        "GRU Without Time",
+        "GRU Shuffled Without Time",
     ]
 
 
@@ -258,3 +266,122 @@ def test_mlp_records_bce_training_history() -> None:
     assert result.history["runs"]["bce"]["epochs_trained"] >= 1
     assert result.test_probabilities is not None
     assert len(result.test_probabilities) == len(run.y_test)
+
+
+@pytest.mark.parametrize("model_key", ["gru", "transformer", "hybrid"])
+def test_sequence_models_embeddings_empty_padding_and_reload(tmp_path, model_key):
+    torch = pytest.importorskip("torch")
+    from dataclasses import replace
+
+    import joblib
+
+    run = _run(
+        params={
+            model_key: {
+                "max_epochs": 2,
+                "patience": 1,
+                "batch_size": 16,
+                "hidden_size": 8,
+                "d_model": 8,
+                "nhead": 2,
+                "num_layers": 1,
+                "dim_feedforward": 16,
+                "losses": ["bce"],
+                "dropout": 0,
+            }
+        }
+    )
+    rng = np.random.default_rng(41)
+
+    def sequence(rows):
+        values = np.zeros((rows, 6, 5), dtype=np.float32)
+        values[:, :, :4] = rng.integers(1, 6, (rows, 6, 4))
+        values[:, :, 4] = np.arange(6, 0, -1)
+        mask = np.ones((rows, 6), dtype=bool)
+        mask[0] = False
+        mask[1, 3:] = False
+        values[~mask] = 0
+        return SequenceSplit(
+            values=values,
+            mask=mask,
+            times=np.ones((rows, 6)),
+            categorical_sizes=(6, 6, 6, 6),
+            pre_index_verified=True,
+        )
+
+    run.sequence_train = sequence(len(run.y_train))
+    run.sequence_val = sequence(len(run.y_val))
+    run.sequence_test = sequence(len(run.y_test))
+    result = model_registry()[model_key].run(run)
+    assert result.succeeded, result.reason
+    assert np.isfinite(result.test_probabilities).all()
+    assert any(isinstance(m, torch.nn.Embedding) for m in result.estimator.network.modules())
+    path = tmp_path / f"{model_key}.joblib"
+    joblib.dump(result.estimator, path)
+    loaded = joblib.load(path)
+    np.testing.assert_allclose(
+        loaded.predict_proba(run.sequence_test)[:, 1], result.test_probabilities
+    )
+    altered = replace(run.sequence_test, values=run.sequence_test.values.copy())
+    altered.values[~altered.mask] = 4
+    np.testing.assert_allclose(loaded.predict_proba(altered)[:, 1], result.test_probabilities)
+    if model_key == "hybrid":
+        changed = replace(run.sequence_test, wide=run.X_test.copy())
+        changed.wide["age"] = changed.wide.age + 100
+        assert not np.allclose(loaded.predict_proba(changed)[:, 1], result.test_probabilities)
+
+
+def test_time_and_order_ablations_remove_timing_and_preserve_event_multiset():
+    from therapy_switch.models.neural import SequenceScaler
+
+    values = np.zeros((2, 10, 5), dtype=np.float32)
+    values[:, :, :4] = np.arange(2, 12)[None, :, None]
+    values[:, :, 4] = np.arange(10, 0, -1)
+    split = SequenceSplit(
+        values=values,
+        mask=np.ones((2, 10), dtype=bool),
+        times=np.ones((2, 10)),
+        categorical_sizes=(12, 12, 12, 12),
+        pre_index_verified=True,
+    )
+    ordered = SequenceScaler.fit(split, options={"use_time": False}, random_state=42).transform(
+        split
+    )
+    shuffled = SequenceScaler.fit(
+        split, options={"use_time": False, "shuffle_order": True}, random_state=42
+    ).transform(split)
+    assert (shuffled[0][:, :, 4] == 0).all() and (shuffled[2] == 0).all()
+    assert not np.array_equal(ordered[0][0, :, 0], shuffled[0][0, :, 0])
+    np.testing.assert_array_equal(np.sort(ordered[0], axis=1), np.sort(shuffled[0], axis=1))
+    reversed_rows = SequenceSplit(
+        values=values[::-1].copy(),
+        mask=split.mask[::-1].copy(),
+        times=split.times[::-1].copy(),
+        categorical_sizes=split.categorical_sizes,
+        pre_index_verified=True,
+    )
+    scaler = SequenceScaler.fit(
+        split, options={"use_time": False, "shuffle_order": True}, random_state=42
+    )
+    np.testing.assert_array_equal(scaler.transform(reversed_rows)[0][::-1], shuffled[0])
+
+
+def test_optional_torch_failure_is_explicit(monkeypatch):
+    import therapy_switch.models.neural as neural
+
+    monkeypatch.setattr(neural, "TORCH_AVAILABLE", False)
+    result = MLPRunner().run(_run())
+    assert result.status == NOT_APPLICABLE
+    assert "torch" in result.reason
+
+
+def test_sequence_available_date_cutoff():
+    seq = SequenceSplit(
+        values=np.ones((1, 1, 1)),
+        mask=np.ones((1, 1), dtype=bool),
+        event_dates=np.array([["2024-01-01"]]),
+        available_dates=np.array([["2024-03-01"]]),
+        index_dates=np.array(["2024-02-01"]),
+    )
+    with pytest.raises(LeakageError):
+        seq.validated()

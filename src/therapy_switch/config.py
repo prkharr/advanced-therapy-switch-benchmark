@@ -63,12 +63,20 @@ def validate_config(config: Mapping[str, Any]) -> None:
 
     mappings = config["therapy_mapping"]
     require_keys(mappings, ["conventional", "advanced"], "therapy_mapping")
-    conventional = set(mappings["conventional"])
-    advanced = set(mappings["advanced"])
+    from therapy_switch.data._config import therapy_definition
+
+    try:
+        definition = therapy_definition(config)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+    conventional = set(definition.conventional_drug_ids)
+    advanced = set(definition.advanced_drug_ids)
     overlap = conventional.intersection(advanced)
     if overlap:
         raise ConfigError(f"Conventional and advanced therapy mappings overlap: {sorted(overlap)}")
-    if not conventional or not advanced:
+    if (not conventional and not definition.conventional_classes) or (
+        not advanced and not definition.advanced_classes
+    ):
         raise ConfigError("Both conventional and advanced therapy mappings must be non-empty.")
 
     split = config["splitting"]
@@ -81,3 +89,34 @@ def validate_config(config: Mapping[str, Any]) -> None:
     top_fractions = config["evaluation"].get("top_fractions", [])
     if not top_fractions or any(float(value) <= 0 or float(value) > 1 for value in top_fractions):
         raise ConfigError("evaluation.top_fractions must contain values in (0, 1].")
+    import pandas as pd
+
+    if not config["data"].get("as_of_date"):
+        raise ConfigError("data.as_of_date is required for label observability")
+    if pd.isna(pd.to_datetime(config["data"]["as_of_date"], errors="coerce")):
+        raise ConfigError("Invalid data.as_of_date")
+    for field in (
+        "claims_lag_days",
+        "label_runout_days",
+        "minimum_history_days",
+        "minimum_followup_days",
+    ):
+        if int(timeline.get(field, 0)) < 0:
+            raise ConfigError(f"{field} cannot be negative")
+    cohort = config.get("cohort", {})
+    coverage = int(cohort.get("coverage_window_days", 270))
+    if coverage < 1 or not 0 <= int(cohort.get("minimum_covered_days", 135)) <= coverage:
+        raise ConfigError("Covered days must fit coverage window")
+    if int(split.get("temporal_gap_days", 0)) < 0:
+        raise ConfigError("temporal_gap_days cannot be negative")
+    experiments = split.get("experiments", [])
+    if not experiments or not set(experiments).issubset({"temporal", "stratified"}):
+        raise ConfigError("Unknown or empty split experiment")
+    if split.get("primary_experiment") not in experiments:
+        raise ConfigError("Primary experiment must be enabled")
+    if config["evaluation"].get("threshold_strategy", "max_f1") not in {
+        "max_f1",
+        "fixed",
+        "target_recall",
+    }:
+        raise ConfigError("Unknown threshold strategy")

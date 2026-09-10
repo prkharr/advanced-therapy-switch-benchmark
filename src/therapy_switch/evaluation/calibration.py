@@ -174,3 +174,61 @@ __all__ = [
     "compare_calibration_methods",
     "fit_calibrator_on_validation",
 ]
+
+
+def select_crossfit_calibrator(
+    y, scores, patient_ids, methods=("none", "sigmoid"), random_state=42
+):
+    """Compare calibration candidates on held-out validation patient folds."""
+    from sklearn.model_selection import GroupKFold
+
+    y, scores = validate_predictions(y, scores)
+    groups = np.asarray(patient_ids)
+    rows = [
+        {
+            "method": "none",
+            "validation_brier": float(np.mean((scores - y) ** 2)),
+            "status": "COMPLETED",
+            "selection": "validation_patient_crossfit",
+        }
+    ]
+    fitted = {}
+    n_groups = len(np.unique(groups))
+    for method in methods:
+        if method == "none":
+            continue
+        try:
+            if n_groups < 3:
+                raise ValueError("At least three validation patients needed")
+            oof = np.zeros(len(y))
+            for train, valid in GroupKFold(n_splits=min(3, n_groups)).split(scores, y, groups):
+                calibrator = ProbabilityCalibrator(method, random_state).fit(
+                    y[train], scores[train]
+                )
+                oof[valid] = calibrator.transform(scores[valid])
+            fitted[method] = ProbabilityCalibrator(method, random_state).fit(y, scores)
+            rows.append(
+                {
+                    "method": method,
+                    "validation_brier": float(np.mean((oof - y) ** 2)),
+                    "status": "COMPLETED",
+                    "selection": "validation_patient_crossfit",
+                }
+            )
+        except ValueError as exc:
+            rows.append(
+                {
+                    "method": method,
+                    "validation_brier": np.nan,
+                    "status": "NOT APPLICABLE",
+                    "reason": str(exc),
+                }
+            )
+    selection = pd.DataFrame(rows)
+    winner = (
+        selection.loc[selection.status.eq("COMPLETED")]
+        .sort_values(["validation_brier", "method"])
+        .iloc[0]["method"]
+    )
+    selection["selected"] = selection.method.eq(winner)
+    return fitted.get(winner), selection

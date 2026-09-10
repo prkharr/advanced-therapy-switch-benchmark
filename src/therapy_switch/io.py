@@ -18,19 +18,14 @@ import pandas as pd
 
 from therapy_switch.schemas import CANONICAL_SCHEMAS, validate_tables
 
-DEFAULT_FILE_NAMES = {
-    "patients": "patients",
-    "medical_claims": "medical_claims",
-    "pharmacy_claims": "pharmacy_claims",
-    "providers": "providers",
-}
+DEFAULT_FILE_NAMES = {name: name for name in CANONICAL_SCHEMAS}
 
 
 def _read_frame(path: Path, file_format: str) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Claims input not found: {path}")
     if file_format == "csv":
-        return pd.read_csv(path)
+        return pd.read_csv(path, dtype=str)
     if file_format == "parquet":
         try:
             return pd.read_parquet(path)
@@ -77,8 +72,9 @@ def load_claims_directory(config: Mapping[str, Any]) -> Dict[str, pd.DataFrame]:
                 frame[date_column] = pd.to_datetime(frame[date_column], errors="raise")
         tables[canonical_name] = frame
 
-    validate_tables(tables)
-    return tables
+    from therapy_switch.data.raw_source_adapter import canonicalize_raw_tables
+
+    return canonicalize_raw_tables(tables, config)
 
 
 def save_claims_directory(

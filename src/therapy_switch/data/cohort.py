@@ -1,290 +1,185 @@
-"""Eligible-patient cohort construction with strict temporal semantics."""
+"""Monthly eligibility and future labels, keyed by snapshot rather than patient."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-
 import pandas as pd
 
-from ._config import config_value, therapy_definition, timeline_days
-
-REQUIRED_PATIENT_COLUMNS = {
-    "patient_id",
-    "observation_start",
-    "observation_end",
-}
-REQUIRED_PHARMACY_COLUMNS = {
-    "patient_id",
-    "fill_date",
-    "drug_id",
-    "therapy_class",
-}
+from ._config import therapy_definition, timeline_days
+from .availability import coverage_days, known_claims, maximum_gap, valid_exposures
 
 
-def _require_columns(frame: pd.DataFrame, columns: set[str], table_name: str) -> None:
-    missing = sorted(columns - set(frame.columns))
-    if missing:
-        raise ValueError(f"{table_name} is missing required columns: {missing}")
+def _enrolled(intervals, start, end):
+    cursor = pd.Timestamp(start)
+    for row in intervals.sort_values("coverage_start").itertuples(index=False):
+        left, right = pd.Timestamp(row.coverage_start), pd.Timestamp(row.coverage_end)
+        if right < cursor:
+            continue
+        if left > cursor:
+            return False
+        cursor = max(cursor, right + pd.Timedelta(days=1))
+        if cursor > end:
+            return True
+    return False
 
 
-def _resolve_index_dates(
-    patients: pd.DataFrame,
-    conventional_claims: pd.DataFrame,
-    config: Any,
-    observation_days: int,
-    prediction_days: int,
-) -> pd.Series:
-    strategy = str(
-        config_value(
-            config,
-            "index_date_strategy",
-            "cohort.index_date_strategy",
-            "timeline.index_date_strategy",
-            default="auto",
-        )
-    ).lower()
-    index_column = str(
-        config_value(config, "index_date_column", "cohort.index_date_column", default="index_date")
-    )
-    scalar_index = config_value(config, "cohort.index_date", default=None)
-
-    if scalar_index is not None:
-        return pd.Series(pd.Timestamp(scalar_index), index=patients.index, dtype="datetime64[ns]")
-    if (
-        strategy
-        in {
-            "auto",
-            "patient_column",
-            "provided",
-            "conventional_claim_anchor",
-        }
-        and index_column in patients.columns
-    ):
-        index_dates = pd.to_datetime(patients[index_column], errors="coerce")
-        if strategy != "auto" and index_dates.isna().any():
-            raise ValueError(f"Patient index-date column {index_column!r} contains invalid dates")
-        return index_dates
-    if strategy in {"patient_column", "provided"}:
-        raise ValueError(f"Configured index-date column {index_column!r} was not found")
-
-    supported = {
-        "auto",
-        "first_eligible_conventional_fill",
-        "last_eligible_conventional_fill",
-        "first_conventional_fill",
-        "last_conventional_fill",
-        "conventional_claim_anchor",
-    }
-    if strategy not in supported:
-        raise ValueError(
-            f"Unsupported index_date_strategy {strategy!r}; expected one of {sorted(supported)}"
-        )
-
-    eligible = conventional_claims.merge(
-        patients[["patient_id", "observation_start", "observation_end"]],
-        on="patient_id",
-        how="inner",
-        validate="many_to_one",
-    )
-    eligible["earliest_index"] = eligible["observation_start"] + pd.to_timedelta(
-        observation_days, unit="D"
-    )
-    eligible["latest_index"] = eligible["observation_end"] - pd.to_timedelta(
-        prediction_days, unit="D"
-    )
-    eligible = eligible.loc[
-        eligible["fill_date"].between(eligible["earliest_index"], eligible["latest_index"])
-    ]
-    configured_start = config_value(config, "timeline.index_date_start", default=None)
-    configured_end = config_value(config, "timeline.index_date_end", default=None)
-    if configured_start is not None:
-        eligible = eligible.loc[eligible["fill_date"] >= pd.Timestamp(configured_start)]
-    if configured_end is not None:
-        eligible = eligible.loc[eligible["fill_date"] <= pd.Timestamp(configured_end)]
-    choose_first = strategy in {
-        "auto",
-        "first_eligible_conventional_fill",
-        "first_conventional_fill",
-    }
-    aggregate = "min" if choose_first else "max"
-    by_patient = eligible.groupby("patient_id", sort=False)["fill_date"].agg(aggregate)
-    return patients["patient_id"].map(by_patient)
+def snapshot_candidates(tables, config):
+    patients = tables["patients"]
+    timeline = config.get("timeline", {})
+    strategy = timeline.get("index_date_strategy", "monthly")
+    count = int(timeline.get("snapshots_per_patient", 3))
+    first = timeline.get("index_date_start")
+    last = timeline.get("index_date_end")
+    records = []
+    if "snapshot_candidates" in tables:
+        candidates = tables["snapshot_candidates"][["patient_id", "index_date"]].copy()
+    else:
+        for patient in patients.itertuples(index=False):
+            if strategy in {"provided", "monthly"} and hasattr(patient, "index_date"):
+                dates = [
+                    pd.Timestamp(patient.index_date) + pd.DateOffset(months=i) for i in range(count)
+                ]
+            elif strategy == "monthly" and first and last:
+                dates = pd.date_range(first, last, freq="MS")
+            else:
+                raise ValueError(
+                    "Provide snapshot_candidates, patient index_date, or a monthly calendar"
+                )
+            records.extend({"patient_id": patient.patient_id, "index_date": date} for date in dates)
+        candidates = pd.DataFrame(records)
+    candidates["index_date"] = pd.to_datetime(candidates.index_date, errors="raise")
+    if candidates[["patient_id", "index_date"]].isna().any().any() or candidates.duplicated().any():
+        raise ValueError("Candidate patient/index pairs must be non-null and unique")
+    if first:
+        candidates = candidates.loc[candidates.index_date >= pd.Timestamp(first)]
+    if last:
+        candidates = candidates.loc[candidates.index_date <= pd.Timestamp(last)]
+    return candidates.sort_values(["index_date", "patient_id"]).reset_index(drop=True)
 
 
-def build_cohort(
-    tables: Mapping[str, pd.DataFrame], config: Mapping[str, Any] | Any | None = None
-) -> pd.DataFrame:
-    """Build a leakage-safe conventional-therapy cohort and future outcome.
-
-    Eligibility requires a complete lookback and prediction window, at least one
-    conventional-therapy claim during lookback (configurable), and no advanced
-    therapy on or before the index date. The outcome is an advanced-therapy claim
-    strictly after index and on or before ``index + prediction_window_days``.
-
-    The default ``auto`` index strategy uses ``patients.index_date`` when present
-    (as in the synthetic data). Otherwise it uses the first conventional claim
-    that permits complete lookback and follow-up. Strategies and therapy mappings
-    are configuration-driven.
-
-    Returns a frame with at least ``patient_id``, ``index_date``, ``outcome``, and
-    ``label``. ``outcome_date`` is included for auditability but must never be a
-    model feature.
-    """
-
-    config = {} if config is None else config
-    if "patients" not in tables or "pharmacy_claims" not in tables:
-        raise ValueError("tables must contain 'patients' and 'pharmacy_claims'")
-    patients = tables["patients"].copy()
-    pharmacy = tables["pharmacy_claims"].copy()
-    _require_columns(patients, REQUIRED_PATIENT_COLUMNS, "patients")
-    _require_columns(pharmacy, REQUIRED_PHARMACY_COLUMNS, "pharmacy_claims")
-    if patients["patient_id"].duplicated().any():
-        raise ValueError("patients.patient_id must be unique")
-
-    patients["observation_start"] = pd.to_datetime(patients["observation_start"], errors="coerce")
-    patients["observation_end"] = pd.to_datetime(patients["observation_end"], errors="coerce")
-    pharmacy["fill_date"] = pd.to_datetime(pharmacy["fill_date"], errors="coerce")
-    if patients[["observation_start", "observation_end"]].isna().any().any():
-        raise ValueError("Patient observation bounds contain invalid dates")
-    if pharmacy["fill_date"].isna().any():
-        raise ValueError("pharmacy_claims.fill_date contains invalid dates")
-
+def build_cohort(tables, config=None):
+    config = config or {}
+    observation, horizon = timeline_days(config)
+    timeline, settings = config.get("timeline", {}), config.get("cohort", {})
+    lag = int(timeline.get("claims_lag_days", 0))
+    runout = int(timeline.get("label_runout_days", 30))
+    if "as_of_date" not in config.get("data", {}):
+        raise ValueError("data.as_of_date is required to establish label maturity")
+    as_of = pd.Timestamp(config["data"]["as_of_date"])
+    history_min = int(timeline.get("minimum_history_days", observation))
+    followup_min = max(horizon, int(timeline.get("minimum_followup_days", horizon)))
+    coverage_window = int(settings.get("coverage_window_days", 270))
+    coverage_min = int(settings.get("minimum_covered_days", 135))
+    diagnosis_codes = settings.get("diagnosis_codes", ["SYN_NT1"])
+    confirm_codes = settings.get("confirmation_codes", ["SYN_NT1", "SYN_NT2", "SYN_IH"])
+    separation = int(settings.get("diagnosis_separation_days", 90))
     therapy = therapy_definition(config)
-    conventional_mask = therapy.conventional_mask(pharmacy)
-    advanced_mask = therapy.advanced_mask(pharmacy)
-    if isinstance(conventional_mask, bool) or not conventional_mask.any():
-        raise ValueError(
-            "No conventional claims matched the configured therapy mapping; "
-            "supply drug_ids and/or therapy_classes"
+    patients = tables["patients"].set_index("patient_id")
+    rx_groups = dict(tuple(tables["pharmacy_claims"].groupby("patient_id", sort=False)))
+    med_groups = dict(tuple(tables["medical_claims"].groupby("patient_id", sort=False)))
+    enroll_groups = dict(tuple(tables["enrollment"].groupby("patient_id", sort=False)))
+    empty_rx, empty_med = tables["pharmacy_claims"].iloc[:0], tables["medical_claims"].iloc[:0]
+    rows, exclusions = [], []
+    for candidate in snapshot_candidates(tables, config).itertuples(index=False):
+        pid, index = candidate.patient_id, pd.Timestamp(candidate.index_date)
+        if pid not in patients.index:
+            raise ValueError("Candidate contains unknown patient")
+        p = patients.loc[pid]
+        start, end = index - pd.Timedelta(days=observation), index + pd.Timedelta(days=horizon)
+        label_available = end + pd.Timedelta(days=runout)
+        reason = None
+        enrollment = enroll_groups.get(pid, tables["enrollment"].iloc[:0])
+        required_start = index - pd.Timedelta(days=max(observation, history_min, coverage_window))
+        required_end = index + pd.Timedelta(days=followup_min)
+        if label_available > as_of:
+            reason = "immature_label"
+        elif (
+            pd.Timestamp(p.observation_start) > required_start
+            or pd.Timestamp(p.observation_end) < required_end
+            or not _enrolled(enrollment, required_start, required_end)
+        ):
+            reason = "insufficient_observation_or_enrollment"
+        rx_all = rx_groups.get(pid, empty_rx)
+        rx_known = valid_exposures(known_claims(rx_all, "fill_date", index, lag))
+        conventional = rx_known.loc[therapy.conventional_mask(rx_known)]
+        med_known = valid_exposures(
+            known_claims(med_groups.get(pid, empty_med), "claim_date", index, lag)
         )
-    conventional = pharmacy.loc[conventional_mask].copy()
-    advanced = (
-        pharmacy.loc[advanced_mask].copy()
-        if not isinstance(advanced_mask, bool)
-        else pharmacy.iloc[0:0].copy()
-    )
-
-    observation_days, prediction_days = timeline_days(config)
-    patients["index_date"] = _resolve_index_dates(
-        patients, conventional, config, observation_days, prediction_days
-    )
-    candidate = patients.dropna(subset=["index_date"]).copy()
-    candidate["index_date"] = pd.to_datetime(candidate["index_date"])
-    candidate["lookback_start"] = candidate["index_date"] - pd.to_timedelta(
-        observation_days, unit="D"
-    )
-    candidate["prediction_end"] = candidate["index_date"] + pd.to_timedelta(
-        prediction_days, unit="D"
-    )
-    candidate = candidate.loc[
-        (candidate["observation_start"] <= candidate["lookback_start"])
-        & (candidate["observation_end"] >= candidate["prediction_end"])
-    ].copy()
-
-    minimum_conventional_claims = int(
-        config_value(
-            config,
-            "minimum_conventional_claims",
-            "cohort.minimum_conventional_claims",
-            default=1,
+        first_dx = med_known.loc[med_known.diagnosis_code.isin(diagnosis_codes), "claim_date"].min()
+        confirms = med_known.loc[med_known.diagnosis_code.isin(confirm_codes), "claim_date"]
+        confirmed = (
+            pd.notna(first_dx) and (confirms > first_dx + pd.Timedelta(days=separation)).any()
         )
-    )
-    if minimum_conventional_claims < 0:
-        raise ValueError("minimum_conventional_claims cannot be negative")
-    require_conventional = bool(
-        config_value(
-            config,
-            "require_conventional_exposure",
-            "cohort.require_conventional_exposure",
-            default=True,
+        covered = coverage_days(conventional, index - pd.Timedelta(days=coverage_window - 1), index)
+        if (
+            reason is None
+            and settings.get("require_diagnosis_confirmation", True)
+            and not confirmed
+        ):
+            reason = "diagnosis_not_confirmed"
+        if reason is None and conventional.empty:
+            reason = "no_conventional_exposure"
+        if reason is None and int(covered.sum()) < coverage_min:
+            reason = "insufficient_conventional_coverage"
+        if (
+            reason is None
+            and settings.get("require_conventional_on_index", False)
+            and not covered[-1]
+        ):
+            reason = "no_conventional_coverage_on_index"
+        maximum_allowed = settings.get("maximum_gap_days")
+        if (
+            reason is None
+            and maximum_allowed is not None
+            and maximum_gap(covered) > int(maximum_allowed)
+        ):
+            reason = "conventional_gap"
+        if reason is None and therapy.advanced_mask(rx_known).any():
+            reason = "known_prior_advanced"
+        sid = f"{pid}__{index:%Y%m%d}"
+        if reason:
+            exclusions.append(
+                {"snapshot_id": sid, "patient_id": pid, "index_date": index, "reason": reason}
+            )
+            continue
+        observed_rx = valid_exposures(known_claims(rx_all, "fill_date", label_available))
+        future = observed_rx.loc[
+            therapy.advanced_mask(observed_rx)
+            & observed_rx.fill_date.gt(index)
+            & observed_rx.fill_date.le(end)
+        ]
+        outcome_date = future.fill_date.min()
+        first_fill = conventional.fill_date.min()
+        rows.append(
+            {
+                "snapshot_id": sid,
+                "patient_id": pid,
+                "cohort_id": settings.get("cohort_id", "SYN_NT1"),
+                "start_dt": first_fill,
+                "index_date": index,
+                "feature_cutoff": index - pd.Timedelta(days=lag),
+                "lookback_start": start,
+                "prediction_end": end,
+                "label_available_date": label_available,
+                "resp": int(pd.notna(outcome_date)),
+                "label": int(pd.notna(outcome_date)),
+                "outcome_date": outcome_date,
+                "eligible": True,
+                "followup_complete": True,
+                "covered_days": int(covered.sum()),
+                "maximum_gap_days": maximum_gap(covered),
+            }
         )
-    )
-    if require_conventional and minimum_conventional_claims == 0:
-        minimum_conventional_claims = 1
-
-    conventional_history = conventional.merge(
-        candidate[["patient_id", "index_date", "lookback_start"]],
-        on="patient_id",
-        how="inner",
-        validate="many_to_one",
-    )
-    conventional_history = conventional_history.loc[
-        conventional_history["fill_date"].between(
-            conventional_history["lookback_start"], conventional_history["index_date"]
-        )
-    ]
-    conventional_counts = conventional_history.groupby("patient_id").size()
-    if minimum_conventional_claims > 0:
-        eligible_ids = conventional_counts.loc[
-            conventional_counts >= minimum_conventional_claims
-        ].index
-        candidate = candidate.loc[candidate["patient_id"].isin(eligible_ids)].copy()
-
-    require_on_index = bool(
-        config_value(
-            config,
-            "require_conventional_on_index",
-            "cohort.require_conventional_on_index",
-            default=False,
-        )
-    )
-    if require_on_index:
-        index_claims = conventional.merge(
-            candidate[["patient_id", "index_date"]],
-            on="patient_id",
-            how="inner",
-            validate="many_to_one",
-        )
-        index_claim_ids = index_claims.loc[
-            index_claims["fill_date"].eq(index_claims["index_date"]), "patient_id"
-        ].unique()
-        candidate = candidate.loc[candidate["patient_id"].isin(index_claim_ids)].copy()
-
-    advanced_with_landmark = advanced.merge(
-        candidate[["patient_id", "index_date", "prediction_end"]],
-        on="patient_id",
-        how="inner",
-        validate="many_to_one",
-    )
-    prior_advanced_ids = advanced_with_landmark.loc[
-        advanced_with_landmark["fill_date"] <= advanced_with_landmark["index_date"],
-        "patient_id",
-    ].unique()
-    candidate = candidate.loc[~candidate["patient_id"].isin(prior_advanced_ids)].copy()
-
-    advanced_with_landmark = advanced.merge(
-        candidate[["patient_id", "index_date", "prediction_end"]],
-        on="patient_id",
-        how="inner",
-        validate="many_to_one",
-    )
-    future_outcomes = advanced_with_landmark.loc[
-        (advanced_with_landmark["fill_date"] > advanced_with_landmark["index_date"])
-        & (advanced_with_landmark["fill_date"] <= advanced_with_landmark["prediction_end"])
-    ]
-    first_outcome = future_outcomes.groupby("patient_id")["fill_date"].min()
-
-    result = candidate[["patient_id", "index_date"]].copy()
-    result["outcome_date"] = result["patient_id"].map(first_outcome)
-    result["label"] = result["outcome_date"].notna().astype("int8")
-    result["outcome"] = result["label"]
-    result = result[["patient_id", "index_date", "outcome", "label", "outcome_date"]]
-    result.sort_values(["index_date", "patient_id"], inplace=True)
-    result.reset_index(drop=True, inplace=True)
-    return result
+    result = pd.DataFrame(rows)
+    if result.empty:
+        raise ValueError("No eligible mature snapshots; inspect dates and cohort rules")
+    result.attrs["exclusions"] = exclusions
+    return result.sort_values(["index_date", "patient_id"]).reset_index(drop=True)
 
 
-def validate_cohort_timeline(
-    cohort: pd.DataFrame,
-    tables: Mapping[str, pd.DataFrame],
-    config: Mapping[str, Any] | Any | None = None,
-) -> None:
-    """Raise ``AssertionError`` when cohort labels violate temporal definitions."""
-
-    rebuilt = build_cohort(tables, config)
-    expected = rebuilt.set_index("patient_id")[["index_date", "label", "outcome_date"]]
-    actual = cohort.set_index("patient_id")[["index_date", "label", "outcome_date"]]
+def validate_cohort_timeline(cohort, tables, config=None):
+    expected = build_cohort(tables, config).set_index("snapshot_id")
+    actual = cohort.set_index("snapshot_id")
+    columns = ["patient_id", "index_date", "label", "outcome_date", "label_available_date"]
     pd.testing.assert_frame_equal(
-        actual.sort_index(), expected.loc[actual.index].sort_index(), check_dtype=False
+        actual[columns].sort_index(), expected[columns].sort_index(), check_dtype=False
     )

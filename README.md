@@ -1,164 +1,60 @@
-# Advanced Therapy Switch Prediction
+# Advanced Therapy Switch Benchmark
 
-A reproducible benchmarking framework for asking a deliberately neutral question:
-can longitudinal deep learning materially improve advanced-therapy switch
-prediction over strong classical claims models?
+An offline benchmark for predicting advanced-therapy initiation within 90 days of an eligible NT1 patient snapshot. The program context is TAK861; the label does **not** mean receipt of TAK861.
 
-For a short summary of the confirmed client workflow and proposed deep-learning
-evaluation, see the
-[Word project brief](docs/NT1_Advanced_Therapy_Current_Findings_and_DL_Plan.docx)
-or its [editable Markdown source](docs/current_project_findings_and_dl_plan.md).
-The focused [LightGBM-versus-GRU test](examples/test_lightgbm_vs_gru.py) shows
-how to run the first comparison on one leakage-safe temporal cohort.
+Seven canonical source tables produce repeated patient snapshots, wide features and chronological events. The same benchmark also accepts prepared client inputs directly. Patient prediction and HCP prioritization are separate layers.
 
-The project supports synthetic claims for development and canonicalized real
-claims later. It keeps two comparisons separate:
+**SYNTHETIC BENCHMARK RESULTS** are documented in the [project report](docs/TAK861_Advanced_Therapy_Switch_Project_Report.md) and [Word report](docs/TAK861_Advanced_Therapy_Switch_Project_Report.docx). **REAL CLIENT DATA RESULTS — NOT YET RUN.** Snowpark support is implemented and mock-tested; it is **NOT VERIFIED IN SENTINEL**.
 
-1. **Tabular:** logistic regression, random forest, XGBoost, LightGBM, CatBoost,
-   and an MLP on the same leakage-safe aggregate features.
-2. **Longitudinal:** the best aggregate classical model versus LSTM, GRU,
-   bidirectional LSTM, and a compact temporal Transformer on pre-index events.
+## Install and run
 
-It is a commercial analytics and HCP-opportunity workflow—not a treatment
-recommendation system. Scores are predictive associations and must not be used
-to direct clinical care.
+Python 3.10 or newer is required. Create and activate a virtual environment using the commands appropriate to the operating system, then run:
 
-## Quick start
-
-Python 3.10 or newer is required.
-
-```powershell
-py -3.10 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
+~~~sh
+python -m pip install -e ".[benchmark,dev]"
 therapy-switch run --config configs/quickstart.yaml
-pytest
-```
+pytest -q
+~~~
 
-Install the full model suite when compute and platform policy permit:
+The benchmark extra installs LightGBM, PyTorch and SHAP. The core package supports logistic regression and the naive reference; unavailable optional models receive explicit NOT APPLICABLE rows. Install the all extra for the retained XGBoost, CatBoost and optimization integrations. The snowflake extra is optional and is unnecessary for synthetic or file inputs.
 
-```powershell
-python -m pip install -e ".[all,dev]"
-therapy-switch run --config configs/default.yaml
-```
-
-Core execution requires scikit-learn. Optional model packages are imported only
-when needed. If XGBoost, LightGBM, CatBoost, PyTorch, Optuna, or SHAP is missing,
-the run records `NOT APPLICABLE` and a reason; it never invents a score or
-silently removes the model.
-
-Useful commands:
-
-```powershell
-# Generate canonical synthetic input tables without training
+~~~sh
 therapy-switch generate --config configs/quickstart.yaml --output-dir data/synthetic
-
-# Validate canonical real-data files and temporal coverage
-therapy-switch validate-data --config configs/real_claims.yaml
-
-# Run one or both split experiments
+therapy-switch validate-data --config configs/quickstart.yaml
 therapy-switch run --config configs/default.yaml
-```
+~~~
 
-## Repository layout
+Quickstart uses 600 synthetic patients and shorter training. Default uses 3,000 patients, up to three monthly snapshots, a 96-event limit, up to 25 neural epochs and 500 patient-cluster bootstrap draws. CPU threads are bounded; elapsed time depends on hardware. Both configurations use strict temporal evaluation. Cohort rules and coding dictionaries are explicit synthetic engineering assumptions.
 
-```text
-configs/                         Run settings and non-proprietary therapy mappings
-docs/                            Data contract, leakage, design, operations
-src/therapy_switch/
-  data/                          Synthetic generator, cohort, splits, sequences
-  features/                      Leakage-safe aggregate feature engineering
-  models/                        Classical, tabular DL, sequence DL, tuning
-  evaluation/                    Metrics, deciles, bootstrap, calibration, plots
-  hcp/                           Patient-to-HCP attribution and opportunity ranking
-  pipeline.py                    End-to-end experiment orchestration
-  cli.py                         Command-line entry point
-tests/                           Unit and integration tests, including leakage tests
-outputs/                         Reproducible reports (ignored by default)
-artifacts/                       Fitted models and metadata (ignored by default)
-```
+## Models and experiments
 
-## Canonical data inputs
+The default executes logistic regression, synthetic LightGBM reference, MLP, GRU, temporal Transformer, hybrid GRU plus wide features, and a naive prevalence reference. Three additional runs remove recency features from LightGBM, remove timing from GRU, and shuffle a GRU sequence with timing removed. Random Forest, XGBoost, CatBoost, LSTM and BiLSTM remain configurable registry entries.
 
-Real claims are adapted into four tables:
+All enabled models face identical retained snapshots. Preprocessing and vocabularies fit training data only. Validation average precision selects the candidate, neural stopping epoch and optional model parameters. Thresholds use validation data; calibration uses patient-disjoint validation folds. Test comparisons cannot change the selected candidate.
 
-- `patients`: patient identifier, demographics, geography, observable start/end.
-- `medical_claims`: service date, diagnosis, procedure, provider, place of service.
-- `pharmacy_claims`: fill date, product, mapped therapy class, supply, prescriber.
-- `providers`: provider identifier, specialty, geography, organization.
+## Data interfaces
 
-CSV and Parquet are supported. File names and source-to-canonical column renames
-can be declared under `data.tables` in YAML. Therapy classification is always a
-configuration mapping; proprietary product definitions never belong in model
-code. See [the data contract](docs/data_contract.md).
+- Raw source path: canonical patients, medical claims, pharmacy claims, providers, plans, enrollment and effective-dated therapy mapping.
+- Prepared path: snapshot/label, wide-feature and event-history tables; explicit predictor allowlist and reviewed availability lineage are required.
+- Optional Snowpark transport: a supplied session or explicit active-session request, validated identifiers and bounded materialization. Oversized tables fail rather than being silently truncated.
 
-## Temporal design and leakage controls
+The [data contract](docs/data_contract.md) defines exact fields and limitations. Sanitized [raw Snowpark](configs/snowflake_example.yaml) and [prepared-file](configs/prepared_example.yaml) configurations contain placeholders. They require approved mappings and dates before use.
 
-For every patient, the observation window ends on the index date and the label is
-determined only in the subsequent prediction window. Eligibility requires enough
-history and follow-up, conventional therapy exposure, and no prior advanced
-therapy. Features and sequences filter each event at or before the index date.
+## Evidence and outputs
 
-Both patient-stratified and out-of-time splits are available. The temporal split
-orders patients by index date and is the primary decision view by default. Model
-selection, threshold choice, and calibration use validation data only; the test
-population stays untouched until final scoring. See
-[leakage controls](docs/leakage_controls.md).
+Results are written under the configured output directory; trained models and canonical inputs are stored separately under the artifact directory. Default locations are outputs/synthetic_benchmark and artifacts/synthetic_benchmark. Generated data, row-level scores, fitted models and logs are excluded from Git.
 
-## Evaluation and outputs
+Outputs include all-model metrics, executive comparison, same-capacity capture and lift, additional true positives against LightGBM, clustered intervals, calibration, gains/deciles, held-out patient scores, period-specific HCP outputs, SHAP or fallback tabular explanations and sequence code-occlusion sensitivity. Artifacts include split manifests, vocabulary, training histories, fitted preprocessors/models, selected calibration, reload checks and source/input hashes.
 
-Every successful model is evaluated with discrimination, calibration, operating
-point, and field-capacity metrics. The outputs include:
+Scores and HCP rankings support commercial analysis. They are associations, not clinical recommendations or causal effects. Reported evaluation capacity counts snapshot opportunities; HCP aggregation first retains the latest patient snapshot per targeting period.
 
-- `model_benchmark.csv` — required full benchmark, timing, and explicit NA rows.
-- `executive_benchmark.csv` — presentation view of PR-AUC, capture, lift,
-  complexity, and the evidence-based recommendation.
-- `decile_analysis.csv` — per-model decile performance and cumulative lift.
-- `cumulative_gains.csv` — population targeted versus switchers captured.
-- `bootstrap_confidence_intervals.csv` and `paired_model_comparison.csv`.
-- `patient_propensity_scores.csv` and `hcp_targeting_output.csv`.
-- ROC/PR, calibration, gains/lift, decile, and model-comparison charts.
-- run manifest, cohort statistics, selected thresholds, failure reasons, and
-  training histories under the artifact directory.
+## Technical documentation
 
-Ranking metrics are primary: PR-AUC, Recall@Top-X%, Precision@Top-X%, lift,
-deciles, and cumulative gains. Accuracy is intentionally not a selection target.
-Small point-estimate differences are not treated as meaningful without paired
-bootstrap uncertainty, stability, cost, and explainability context.
+- [Benchmark design](docs/benchmark_design.md)
+- [Leakage controls](docs/leakage_controls.md)
+- [Data contract](docs/data_contract.md)
+- [Model card](docs/model_card.md)
+- [Project report](docs/TAK861_Advanced_Therapy_Switch_Project_Report.md)
+- [Focused LightGBM versus GRU example](examples/test_lightgbm_vs_gru.py)
 
-## Real-data configuration example
-
-```yaml
-data:
-  source: files
-  input_dir: D:/governed/claims_snapshot
-  file_format: parquet
-  tables:
-    patients:
-      file: patient_dimension
-      columns:
-        member_token: patient_id
-    pharmacy_claims:
-      file: rx_claims
-      columns:
-        service_date: fill_date
-        product_code: drug_id
-        mapped_class: therapy_class
-```
-
-Copy `configs/default.yaml`, replace only environment-specific paths/mappings,
-and validate before training. Do not commit row-level real claims, identifiers,
-secrets, or governed therapy mappings.
-
-## Reproducibility and governance
-
-- Fixed seeds are applied to Python, NumPy, scikit-learn, and PyTorch when present.
-- Patient identifiers never cross partitions; temporal boundaries are recorded.
-- Runtime and dependency failures are retained as benchmark evidence.
-- Patient scoring and HCP prioritization are separate, auditable layers.
-- HCP attribution and score weights are configurable business rules.
-- SHAP or fallback importance describes association, not causality.
-- Generated data, model binaries, and row-level outputs are ignored by Git.
-
-The synthetic generator is designed only for engineering and test coverage. It
-does not reproduce, infer, or reverse-engineer Komodo Healthcare Map data.
+Run ruff check src tests and pytest -q for validation. Rebuild the Word report from its editable Markdown with python scripts/build_project_document.py. The implementation is an offline research workflow; production deployment is outside its scope.
