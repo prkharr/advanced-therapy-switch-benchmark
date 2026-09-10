@@ -6,7 +6,20 @@ Seven canonical source tables produce repeated patient snapshots, wide features 
 
 **SYNTHETIC BENCHMARK RESULTS** are documented in the [project report](docs/TAK861_Advanced_Therapy_Switch_Project_Report.md) and [Word report](docs/TAK861_Advanced_Therapy_Switch_Project_Report.docx). **REAL CLIENT DATA RESULTS — NOT YET RUN.** Snowpark support is implemented and mock-tested; it is **NOT VERIFIED IN SENTINEL**.
 
-## Install and run
+## Raw data to field-ready HCP outputs
+
+Run the modular delivery pipeline with:
+
+~~~sh
+python -m pip install -e ".[deep-learning]"
+python run_pipeline.py --config configs/delivery_demo.yaml
+~~~
+
+It generates synthetic raw inputs, builds a label-free cohort at a common assessment date, fits the fixed experimental neural candidate, selects the top 10% of eligible patients, and exports an **HCP-only CSV** plus a **self-contained HTML report**. Open the HTML directly in a browser; it supports filtering, sorting and CSV download without a server or internet. The default candidate is not a statistically confirmed winner.
+
+Use score mode to apply a saved model to new raw data. Data adapters, model trainers/recipes and HCP rules are replaceable through configuration while the pipeline architecture remains the same. The [delivery guide](docs/field_delivery_pipeline.md) covers raw files, prepared inputs, model replacement, output columns, and the distinction between current eligibility and mature historical labels.
+
+## Install and run the benchmark
 
 Python 3.10 or newer is required. Create and activate a virtual environment using the commands appropriate to the operating system, then run:
 
@@ -64,6 +77,7 @@ Scores and HCP rankings support commercial analysis. They are associations, not 
 
 ## Technical documentation
 
+- [Raw-to-HCP pipeline and offline report](docs/field_delivery_pipeline.md)
 - [Benchmark design](docs/benchmark_design.md)
 - [Leakage controls](docs/leakage_controls.md)
 - [Data contract](docs/data_contract.md)

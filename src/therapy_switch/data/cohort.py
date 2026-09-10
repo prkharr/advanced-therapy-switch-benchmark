@@ -56,7 +56,12 @@ def snapshot_candidates(tables, config):
     return candidates.sort_values(["index_date", "patient_id"]).reset_index(drop=True)
 
 
-def build_cohort(tables, config=None):
+def build_cohort(tables, config=None, *, labelled=True):
+    """Build mature training snapshots or label-free, as-known scoring snapshots.
+
+    Scoring requires observation only through index and excludes every advanced
+    exposure already known at index, including within the predictor service lag.
+    """
     config = config or {}
     observation, horizon = timeline_days(config)
     timeline, settings = config.get("timeline", {}), config.get("cohort", {})
@@ -89,8 +94,10 @@ def build_cohort(tables, config=None):
         reason = None
         enrollment = enroll_groups.get(pid, tables["enrollment"].iloc[:0])
         required_start = index - pd.Timedelta(days=max(observation, history_min, coverage_window))
-        required_end = index + pd.Timedelta(days=followup_min)
-        if label_available > as_of:
+        required_end = index + pd.Timedelta(days=followup_min) if labelled else index
+        if index > as_of:
+            reason = "future_index"
+        elif labelled and label_available > as_of:
             reason = "immature_label"
         elif (
             pd.Timestamp(p.observation_start) > required_start
@@ -133,7 +140,10 @@ def build_cohort(tables, config=None):
             and maximum_gap(covered) > int(maximum_allowed)
         ):
             reason = "conventional_gap"
-        if reason is None and therapy.advanced_mask(rx_known).any():
+        eligibility_rx = (
+            rx_known if labelled else valid_exposures(known_claims(rx_all, "fill_date", index, 0))
+        )
+        if reason is None and therapy.advanced_mask(eligibility_rx).any():
             reason = "known_prior_advanced"
         sid = f"{pid}__{index:%Y%m%d}"
         if reason:
@@ -141,13 +151,15 @@ def build_cohort(tables, config=None):
                 {"snapshot_id": sid, "patient_id": pid, "index_date": index, "reason": reason}
             )
             continue
-        observed_rx = valid_exposures(known_claims(rx_all, "fill_date", label_available))
-        future = observed_rx.loc[
-            therapy.advanced_mask(observed_rx)
-            & observed_rx.fill_date.gt(index)
-            & observed_rx.fill_date.le(end)
-        ]
-        outcome_date = future.fill_date.min()
+        outcome_date = pd.NaT
+        if labelled:
+            observed_rx = valid_exposures(known_claims(rx_all, "fill_date", label_available))
+            future = observed_rx.loc[
+                therapy.advanced_mask(observed_rx)
+                & observed_rx.fill_date.gt(index)
+                & observed_rx.fill_date.le(end)
+            ]
+            outcome_date = future.fill_date.min()
         first_fill = conventional.fill_date.min()
         rows.append(
             {
@@ -171,7 +183,30 @@ def build_cohort(tables, config=None):
         )
     result = pd.DataFrame(rows)
     if result.empty:
-        raise ValueError("No eligible mature snapshots; inspect dates and cohort rules")
+        if labelled:
+            raise ValueError("No eligible mature snapshots; inspect dates and cohort rules")
+        result = pd.DataFrame(
+            columns=[
+                "snapshot_id",
+                "patient_id",
+                "cohort_id",
+                "start_dt",
+                "index_date",
+                "feature_cutoff",
+                "lookback_start",
+                "prediction_end",
+                "eligible",
+                "covered_days",
+                "maximum_gap_days",
+            ]
+        )
+    if not labelled:
+        result = result.drop(
+            columns=["label", "resp", "outcome_date", "label_available_date", "followup_complete"],
+            errors="ignore",
+        )
+    for column in ("index_date", "feature_cutoff", "lookback_start", "prediction_end", "start_dt"):
+        result[column] = pd.to_datetime(result[column])
     result.attrs["exclusions"] = exclusions
     return result.sort_values(["index_date", "patient_id"]).reset_index(drop=True)
 

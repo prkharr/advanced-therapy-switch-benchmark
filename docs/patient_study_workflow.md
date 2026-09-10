@@ -4,6 +4,8 @@ This workflow targets future advanced-therapy initiation captured in a list cont
 
 The executable study remains entirely synthetic. Replacing synthetic inputs with real data requires approved eligibility, therapy mappings, availability lineage and independent validation. No remote warehouse access is needed for this workflow.
 
+For strict replay of the sealed study, use commit **649ac654ed1d9f4178c2a5ffb598a154e4bfb83c**. Later delivery-pipeline additions change the source fingerprint but do not alter this frozen study. The [raw-to-HCP pipeline](field_delivery_pipeline.md) now provides a separate current-eligibility path and offline client deliverables.
+
 ## What a patient list means
 
 Keep the latest supplied eligible assessment for each patient, then rank by score. Do not take each patient's maximum score or maximum label across historical assessments. Break score ties by patient ID, independently of outcomes. Select ceil(0.10 × patient count) patients.

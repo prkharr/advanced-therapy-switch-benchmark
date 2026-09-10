@@ -54,6 +54,7 @@ dev = [
 [project.scripts]
 therapy-switch = "therapy_switch.cli:main"
 therapy-switch-patients = "therapy_switch.patient_study:main"
+therapy-switch-deliver = "therapy_switch.delivery.pipeline:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
