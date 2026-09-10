@@ -36,8 +36,10 @@
     "saved_model_scores_exactly_match": true,
     "score_mode_does_not_train": true,
     "model_replacement_uses_same_orchestrator": true,
-    "local_tests_passed": 141,
-    "lint_passed": true
+    "local_tests_passed": 142,
+    "lint_passed": true,
+    "installed_command_exit_code": 0,
+    "installed_command_exact_replay": true
   },
   "browser": {
     "rows": 20,
@@ -58,5 +60,7 @@
   "external_connections": false,
   "environment_verification": "NOT VERIFIED IN SENTINEL",
   "model_promotion": "No statistically confirmed winner; the neural default remains experimental",
-  "patient_study_revision": "649ac654ed1d9f4178c2a5ffb598a154e4bfb83c"
+  "patient_study_revision": "649ac654ed1d9f4178c2a5ffb598a154e4bfb83c",
+  "execution_revision": "d889cf0841ad586289bf4e37d2db5a24b01fbbfe",
+  "installed_command_source_fingerprint": "b22a668cee3c70d5855f8c392f20d1912778173780e82588fb56be6e47bb9031"
 }

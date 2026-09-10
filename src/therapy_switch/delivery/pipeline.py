@@ -394,7 +394,7 @@ def main(argv=None):
     config = load_delivery_config(args.config, overrides=overrides)
     result = run_delivery(config, mode=args.mode, model_artifact=args.model_artifact)
     print(json.dumps(result, indent=2))
-    return result
+    return 0
 
 
 if __name__ == "__main__":

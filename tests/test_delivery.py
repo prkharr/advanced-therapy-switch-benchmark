@@ -403,3 +403,14 @@ def test_timestamp_exclusion_metadata_does_not_break_artifact_export(delivery_co
     assert result["status"] == "COMPLETED"
     saved = pd.read_parquet(Path(result["manifest"]).parent / "patient_scores.parquet")
     assert len(saved) == 20 and saved.attrs == {}
+
+
+def test_installed_entrypoint_reports_process_success(delivery_config, monkeypatch, capsys):
+    from therapy_switch.delivery import pipeline
+
+    monkeypatch.setattr(pipeline, "load_delivery_config", lambda *args, **kwargs: delivery_config)
+    result = {"status": "COMPLETED", "hcp_targets": 2}
+    monkeypatch.setattr(pipeline, "run_delivery", lambda *args, **kwargs: result)
+    # Console scripts call sys.exit(main()); returning a dict would mean exit 1.
+    assert pipeline.main([]) == 0
+    assert json.loads(capsys.readouterr().out) == result
