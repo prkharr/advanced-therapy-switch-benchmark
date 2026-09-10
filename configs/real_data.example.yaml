@@ -1,0 +1,177 @@
+# Copy with setup_real_data.py. Nulls require actual source/business definitions.
+# Empty symptom/comorbidity lists intentionally disable those code groups until mapped.
+project:
+  name: advanced_therapy_actual_data
+  random_seed: 42
+  output_dir: ../../outputs/actual_benchmark
+  artifact_dir: ../../artifacts/actual_benchmark
+data:
+  kind: real
+  source: files
+  input_dir: ../../data/raw/current
+  file_format: csv
+  as_of_date: null
+  extract_version: null
+  require_export_manifest: true
+timeline:
+  observation_window_days: null
+  prediction_window_days: null
+  minimum_history_days: null
+  minimum_followup_days: null
+  index_date_strategy: monthly
+  snapshots_per_patient: 3
+  claims_lag_days: null
+  label_runout_days: null
+  index_date_start: null
+  index_date_end: null
+therapy_mapping:
+  conventional:
+    drug_ids: []
+    therapy_classes:
+    - conventional
+  advanced:
+    drug_ids: []
+    therapy_classes:
+    - advanced
+cohort:
+  cohort_id: null
+  require_diagnosis_confirmation: null
+  diagnosis_codes: []
+  confirmation_codes: []
+  diagnosis_separation_days: null
+  coverage_window_days: null
+  minimum_covered_days: null
+  maximum_gap_days: null
+  require_conventional_on_index: null
+features:
+  rolling_windows_days:
+  - 30
+  - 60
+  - 90
+  - 180
+  - 365
+  include_geography: true
+  missing_recency_value_days: 730
+  specialist_specialties: []
+  symptom_codes: []
+  comorbidity_codes: []
+  sequence:
+    max_length: 96
+    vocab_min_frequency: 2
+splitting:
+  experiments:
+  - temporal
+  primary_experiment: temporal
+  validation_fraction: 0.2
+  test_fraction: 0.2
+  temporal_gap_days: 0
+models:
+  naive_baseline:
+    enabled: true
+  logistic_regression:
+    enabled: true
+    C: 0.2
+    max_iter: 1000
+    class_weight: balanced
+  lightgbm:
+    enabled: true
+    n_estimators: 250
+    num_leaves: 15
+    learning_rate: 0.04
+    min_child_samples: 40
+  mlp:
+    enabled: true
+    hidden_dims:
+    - 64
+    - 32
+    dropout: 0.2
+    max_epochs: 25
+    patience: 5
+    losses:
+    - bce
+  gru:
+    enabled: true
+    hidden_size: 32
+  transformer:
+    enabled: true
+    d_model: 32
+    nhead: 4
+    num_layers: 1
+    dim_feedforward: 64
+  hybrid:
+    enabled: true
+    hidden_size: 32
+  lightgbm_wide:
+    enabled: true
+  gru_no_time:
+    enabled: true
+  gru_shuffled:
+    enabled: true
+  random_forest:
+    enabled: false
+    n_estimators: 150
+    min_samples_leaf: 5
+  xgboost:
+    enabled: false
+    n_estimators: 200
+    max_depth: 4
+  catboost:
+    enabled: false
+    iterations: 200
+    depth: 5
+  lstm:
+    enabled: false
+    hidden_size: 32
+  bilstm:
+    enabled: false
+    hidden_size: 24
+  sequence_training:
+    batch_size: 128
+    max_epochs: 25
+    patience: 5
+    learning_rate: 0.001
+    num_threads: 2
+    dropout: 0.2
+tuning:
+  enabled: false
+  n_trials: 5
+evaluation:
+  top_fractions:
+  - 0.1
+  threshold_strategy: max_f1
+  fixed_threshold: 0.5
+  target_recall: 0.7
+  bootstrap_iterations: 500
+  confidence_level: 0.95
+  calibration_bins: 10
+  calibrators:
+  - none
+  - sigmoid
+  select_on: pr_auc
+hcp:
+  attribution_rule: most_recent_relevant_prescriber
+  relevant_specialties:
+  - sleep_medicine
+  - neurology
+  targeting_period: Q
+  high_propensity_threshold_percentile: 90
+  weights:
+    expected_switchers: 1.0
+  normalization: none
+visualizations:
+  enabled: true
+explainability:
+  enabled: true
+  prefer_shap: true
+  max_samples: 100
+  permutation_repeats: 2
+recommendation:
+  material_pr_auc_gain: 0.01
+source_definitions:
+  cohort: null
+  target: null
+  availability: null
+  status: null
+  observation: null
+  therapy_mapping: null
+  diagnosis_normalization: null

@@ -16,14 +16,8 @@ from therapy_switch.io import load_claims_directory, write_json
 from therapy_switch.schemas import CANONICAL_SCHEMAS
 
 
-def export_raw_data(session, config, sql_dir, output_dir="data/raw", *, max_rows=1_000_000):
-    """Read seven reviewed SQL files; validate the exported raw contract before completion.
-
-    SQL must select canonical columns from one consistently versioned, cohort-filtered
-    extract. A successful export validates structure, not the clinical source logic.
-    """
-    if max_rows < 1:
-        raise ValueError("max_rows must be positive")
+def read_export_queries(sql_dir):
+    """Check every query offline before opening a connection or writing files."""
     queries = {}
     for name in CANONICAL_SCHEMAS:
         query = (Path(sql_dir) / f"{name}.sql").read_text(encoding="utf-8")
@@ -33,6 +27,17 @@ def export_raw_data(session, config, sql_dir, output_dir="data/raw", *, max_rows
         if ";" in clean or "{{" in clean or re.search(r"\b(YOUR_|REPLACE_)", clean, re.I):
             raise ValueError(f"{name}.sql contains unresolved placeholders or multiple statements")
         queries[name] = clean
+    return queries
+
+
+def export_raw_data(session, config, sql_dir, output_dir="data/raw", *, max_rows=1_000_000):
+    """Export consistently versioned canonical SELECTs, then validate all seven files."""
+    from therapy_switch.real_data import validate_real_data
+
+    validate_real_data(config)
+    if max_rows < 1:
+        raise ValueError("max_rows must be positive")
+    queries = read_export_queries(sql_dir)
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8]
     directory = Path(output_dir).resolve() / run_id
@@ -40,6 +45,8 @@ def export_raw_data(session, config, sql_dir, output_dir="data/raw", *, max_rows
     manifest = {
         "status": "RUNNING", "run_id": run_id, "source": "snowflake_selects",
         "extract_as_of_date": str(config["data"]["as_of_date"]), "tables": {},
+        "data_kind": config["data"].get("kind", "unverified"),
+        "extract_version": config["data"].get("extract_version"),
         "clinical_logic_review": "Requires upstream review; not established by export",
     }
     manifest_path = directory / "export_manifest.json"
@@ -77,7 +84,7 @@ def export_raw_data(session, config, sql_dir, output_dir="data/raw", *, max_rows
 
         validation = copy.deepcopy(config)
         validation["data"].update(source="files", input_dir=str(directory), file_format="csv")
-        load_claims_directory(validation)
+        load_claims_directory(validation, check_export=False)
         manifest.update(status="COMPLETED", raw_dir=str(directory), contract_validation="passed")
         write_json(manifest, manifest_path)
         return {"raw_dir": str(directory), "manifest": str(manifest_path), "status": "COMPLETED"}
@@ -100,6 +107,7 @@ def main(argv=None):
     from snowflake.snowpark import Session
 
     config = load_delivery_config(args.config)
+    read_export_queries(args.sql_dir)
     session = Session.builder.config("connection_name", args.connection_name).create()
     try:
         result = export_raw_data(

@@ -36,6 +36,13 @@ def load_config(path: str | Path, overrides: Mapping[str, Any] | None = None) ->
     if overrides:
         config = _deep_merge(config, overrides)
     validate_config(config)
+    if config["data"].get("kind") == "real":
+        for owner, keys in ((config["data"], ("input_dir",)),
+                            (config["project"], ("output_dir", "artifact_dir"))):
+            for key in keys:
+                if owner.get(key):
+                    value = Path(owner[key])
+                    owner[key] = str(value if value.is_absolute() else (config_path.parent / value).resolve())
     config["_config_path"] = str(config_path.resolve())
     return config
 
@@ -48,6 +55,10 @@ def require_keys(mapping: Mapping[str, Any], keys: Iterable[str], context: str) 
 
 def validate_config(config: Mapping[str, Any]) -> None:
     """Fail early on settings that could invalidate temporal evaluation."""
+
+    from therapy_switch.real_data import validate_real_data
+
+    validate_real_data(config)
 
     require_keys(
         config,

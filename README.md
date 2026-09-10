@@ -10,7 +10,22 @@ Seven canonical source tables produce repeated patient snapshots, wide features 
 
 The [implementation workbook](docs/implementation_review/Project_data_features_and_analysis_plain.xlsx) lists dataset decisions, NDC/ICD handling, features, analysis evidence and remaining dependencies. The [raw-folder workflow](docs/raw_folder_workflow.md) explains how to map the seven [SQL extraction templates](sql/raw_extract), export Snowflake data to CSV, and run the same pipeline with `--raw-dir`. Actual source mappings must be completed before extraction; no real-data performance is claimed.
 
-Run the modular delivery pipeline with:
+Initialize the actual-data workflow, complete the private source mappings and rules,
+then check and run:
+
+~~~sh
+python -m pip install -e ".[snowflake,benchmark]"
+python setup_real_data.py
+python run_pipeline.py --check --extract
+python run_pipeline.py --extract
+~~~
+
+The check lists missing definitions before any warehouse connection. The main script
+defaults to the private real-data configuration. Use `--raw-dir data/raw/EXTRACT_ID`
+to process an existing verified extract. See the [setup guide](docs/raw_folder_workflow.md)
+for required fields, schema inspection and model comparison.
+
+Run an explicit synthetic demonstration with:
 
 ~~~sh
 python -m pip install -e ".[deep-learning]"

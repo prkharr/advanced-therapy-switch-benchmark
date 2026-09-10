@@ -29,6 +29,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--config", required=True, type=Path)
     run.add_argument("--output-dir", type=Path)
     run.add_argument("--artifact-dir", type=Path)
+    run.add_argument("--raw-dir", type=Path, help="Use a completed canonical CSV extract")
     run.add_argument(
         "--experiment",
         choices=("stratified", "temporal", "both"),
@@ -48,12 +49,15 @@ def _parser() -> argparse.ArgumentParser:
         "validate-data", help="Validate schema, timeline, features, and sequences without training."
     )
     validate.add_argument("--config", required=True, type=Path)
+    validate.add_argument("--raw-dir", type=Path, help="Use a completed canonical CSV extract")
     return parser
 
 
 def _run_command(arguments: argparse.Namespace) -> int:
     config = load_config(arguments.config)
     config = copy.deepcopy(config)
+    if arguments.raw_dir:
+        config["data"].update(source="files", input_dir=str(arguments.raw_dir.resolve()), file_format="csv")
     if arguments.output_dir is not None:
         config["project"]["output_dir"] = str(arguments.output_dir)
     if arguments.artifact_dir is not None:
@@ -88,6 +92,8 @@ def _run_command(arguments: argparse.Namespace) -> int:
 
 def _generate_command(arguments: argparse.Namespace) -> int:
     config = load_config(arguments.config)
+    if config["data"].get("kind") == "real" or config["data"]["source"] != "synthetic":
+        raise ValueError("Synthetic generation requires an explicit synthetic configuration")
     tables = generate_synthetic_claims(config)
     save_claims_directory(tables, arguments.output_dir, file_format=arguments.format)
     print(
@@ -106,6 +112,8 @@ def _generate_command(arguments: argparse.Namespace) -> int:
 
 def _validate_command(arguments: argparse.Namespace) -> int:
     config = load_config(arguments.config)
+    if arguments.raw_dir:
+        config["data"].update(source="files", input_dir=str(arguments.raw_dir.resolve()), file_format="csv")
     _, inputs = prepare_inputs(config)
     print(
         json.dumps(

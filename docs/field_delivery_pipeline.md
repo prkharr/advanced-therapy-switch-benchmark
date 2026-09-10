@@ -2,6 +2,12 @@
 
 Run one script to acquire raw data, create features, fit or load a fixed model, select the highest-scoring 10% of currently eligible patients, attribute patients to HCPs, and export an HCP CSV with an offline HTML report.
 
+For actual data, follow the [Snowflake raw-folder setup](raw_folder_workflow.md).
+`run_pipeline.py` now defaults to `configs/private/delivery.yaml`; initialize it
+with `setup_real_data.py`. `--extract` exports and processes the same CSV folder,
+and `--raw-dir` reuses a verified export. The demonstration below requires its
+explicit demo configuration.
+
 The default model is the development-selected two-network candidate from the patient capture study. **There is no statistically confirmed winner.** Its fresh-cohort improvement gate failed. The pipeline therefore labels the default model **experimental** in both deliverables. The original logistic reference is supplied as a replacement example. This delivery demo does not reopen model selection or change the frozen study.
 
 ## Run the complete demonstration
@@ -47,7 +53,10 @@ Every run has a unique directory. A failed run leaves a FAILED manifest and must
 
 ## Use raw files
 
-Edit configs/delivery_files.yaml with the extract directory, extraction as-of date, assessment date, cohort rules and therapy/code mappings. Seven files must satisfy the [canonical data contract](data_contract.md):
+Use `setup_real_data.py` and edit the generated private configuration with actual
+dates, cohort rules and therapy/code mappings. The older `delivery_files.yaml`
+entry point also requires the private benchmark configuration and explicit actual
+settings. Seven files must satisfy the [canonical data contract](data_contract.md):
 
 - patients.csv
 - medical_claims.csv

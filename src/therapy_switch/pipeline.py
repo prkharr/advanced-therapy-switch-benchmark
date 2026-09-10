@@ -93,6 +93,9 @@ def _read_prepared_files(config):
 
 
 def prepare_inputs(config, *, session=None, tables=None):
+    from therapy_switch.real_data import validate_real_data
+
+    validate_real_data(config)
     source = config["data"].get("source", "synthetic")
     if tables is None:
         if source == "synthetic":

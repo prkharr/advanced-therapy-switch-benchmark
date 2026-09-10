@@ -40,6 +40,9 @@ def input_policy_hash(config):
     """Version input meaning, independently of paths, transport and scoring date."""
     timeline = config["timeline"]
     policy = {key: config.get(key, {}) for key in ("cohort", "features", "therapy_mapping")}
+    if config["data"].get("kind") == "real":
+        policy["data_kind"] = "real"
+        policy["source_definitions"] = config.get("source_definitions", {})
     policy["feature_contract_version"] = config["delivery"].get(
         "feature_contract_version", "claims-v1"
     )
@@ -66,8 +69,12 @@ class DeliveryModel:
     recipe_sha256: str | None
     trainer: str
     input_policy_sha256: str | None = None
+    training_data_kind: str = "unverified"
 
     def predict(self, batch, scoring_date, *, config=None):
+        if config and config["data"].get("kind") == "real":
+            if getattr(self, "training_data_kind", "unverified") != "real":
+                raise ValueError("Real-data scoring requires a model trained in real-data mode")
         if self.input_policy_sha256 is not None:
             if config is None or input_policy_hash(config) != self.input_policy_sha256:
                 raise ValueError(
@@ -91,6 +98,10 @@ class DeliveryModel:
 
 def load_delivery_config(path, *, overrides=None):
     path = Path(path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Delivery configuration not found: {path}. Run python setup_real_data.py first."
+        )
     settings = yaml.safe_load(path.read_text()) or {}
     if "benchmark_config" not in settings or "delivery" not in settings:
         raise ValueError("Delivery config requires benchmark_config and delivery sections")
@@ -103,6 +114,8 @@ def load_delivery_config(path, *, overrides=None):
     if overrides:
         config = _deep_merge(config, {"delivery": overrides})
     delivery = config["delivery"]
+    if config["data"].get("kind") == "real":
+        validate_real_delivery(config)
     if not 0 < float(delivery.get("patient_fraction", 0.1)) <= 1:
         raise ValueError("Patient fraction must lie in (0, 1]")
     scoring = pd.Timestamp(delivery["scoring_date"])
@@ -132,7 +145,34 @@ def load_delivery_config(path, *, overrides=None):
             value if value.is_absolute() else (path.parent / value).resolve()
         )
     config["_delivery_config_path"] = str(path)
+    config["extraction"] = copy.deepcopy(settings.get("extraction", {}))
+    for key in ("sql_dir", "output_dir"):
+        if config["extraction"].get(key):
+            value = Path(config["extraction"][key])
+            config["extraction"][key] = str(
+                value if value.is_absolute() else (path.parent / value).resolve()
+            )
     return config
+
+
+def validate_real_delivery(config):
+    from therapy_switch.real_data import validate_real_data
+
+    validate_real_data(config)
+    if config["data"].get("kind") != "real":
+        return
+    settings = config["delivery"]
+    scoring = pd.to_datetime(settings.get("scoring_date"), errors="coerce")
+    if pd.isna(scoring):
+        raise ValueError("Set delivery.scoring_date to the actual assessment date")
+    if scoring > pd.Timestamp(config["data"]["as_of_date"]):
+        raise ValueError("Scoring date exceeds the extract as-of date")
+    horizon = int(config["timeline"]["prediction_window_days"])
+    runout = int(config["timeline"]["label_runout_days"])
+    if pd.Timestamp(config["timeline"]["index_date_end"]) + pd.Timedelta(days=horizon + runout) > scoring:
+        raise ValueError("Historical index_date_end needs mature outcomes by scoring_date")
+    if not settings.get("hcp", {}).get("relevant_specialties"):
+        raise ValueError("Set delivery.hcp.relevant_specialties using actual provider categories")
 
 
 def _train_model(inputs, config, artifact_directory):
@@ -190,6 +230,7 @@ def _train_model(inputs, config, artifact_directory):
         recipe_hash,
         settings["trainer"],
         input_policy_hash(config),
+        config["data"].get("kind", "synthetic" if config["data"]["source"] == "synthetic" else "unverified"),
     )
     path = artifact_directory / "model.joblib"
     joblib.dump(model, path)
@@ -243,6 +284,7 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
     if mode not in {"train-score", "score"}:
         raise ValueError("Mode must be train-score or score")
     config = copy.deepcopy(config)
+    validate_real_delivery(config)
     settings = config["delivery"]
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8]
     if config["data"]["source"] == "synthetic" and settings.get("synthetic_csv_dir"):
@@ -255,6 +297,7 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
         "run_id": run_id,
         "status": "RUNNING",
         "mode": mode,
+        "data_kind": config["data"].get("kind", "unverified"),
         "scoring_date": str(pd.Timestamp(settings["scoring_date"]).date()),
         "stages": {},
     }
@@ -383,28 +426,70 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
-        default=str(Path(__file__).resolve().parents[3] / "configs" / "delivery_demo.yaml"),
+        default=str(Path(__file__).resolve().parents[3] / "configs" / "private" / "delivery.yaml"),
     )
     parser.add_argument("--mode", choices=["train-score", "score"], default="train-score")
     parser.add_argument("--model-artifact")
     parser.add_argument("--model-recipe")
     parser.add_argument("--output-dir")
-    parser.add_argument("--raw-dir", help="Read the seven canonical CSV files from this folder")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--raw-dir", help="Read the seven canonical CSV files from this folder")
+    inputs.add_argument("--extract", action="store_true", help="Export Snowflake CSVs before running")
+    parser.add_argument("--connection-name", help="Override the configured named Snowflake connection")
+    parser.add_argument("--check", action="store_true", help="Validate setup/files without training")
     args = parser.parse_args(argv)
     overrides = {}
     if args.model_recipe:
         overrides["model"] = {"recipe": str(Path(args.model_recipe).resolve())}
     if args.output_dir:
         overrides["output_dir"] = str(Path(args.output_dir).resolve())
-    config = load_delivery_config(args.config, overrides=overrides)
-    if args.raw_dir:
-        config["data"].update(
-            source="files", input_dir=str(Path(args.raw_dir).resolve()), file_format="csv"
-        )
-    result = run_delivery(config, mode=args.mode, model_artifact=args.model_artifact)
+    session = None
+    try:
+        config = load_delivery_config(args.config, overrides=overrides)
+        if args.raw_dir:
+            config["data"].update(
+                source="files", input_dir=str(Path(args.raw_dir).resolve()), file_format="csv"
+            )
+        if args.extract:
+            from .raw_export import export_raw_data, read_export_queries
+
+            if config["data"].get("kind") != "real":
+                raise ValueError("Use the real-data configuration with --extract")
+            extraction = config["extraction"]
+            read_export_queries(extraction["sql_dir"])
+            connection = args.connection_name or extraction.get("connection_name")
+            if not connection:
+                raise ValueError("Set extraction.connection_name or supply --connection-name")
+            if args.check:
+                print(json.dumps({"status": "CONFIGURATION_READY", "queries": 7,
+                                  "snowflake_execution": "not performed"}, indent=2))
+                return 0
+            from snowflake.snowpark import Session
+
+            session = Session.builder.config("connection_name", connection).create()
+            exported = export_raw_data(
+                session, config, extraction["sql_dir"], extraction["output_dir"],
+                max_rows=int(extraction.get("max_rows_per_table", 1_000_000)),
+            )
+            config["data"]["input_dir"] = exported["raw_dir"]
+        if args.check:
+            from therapy_switch.io import load_claims_directory
+
+            if config["data"]["source"] != "files":
+                raise ValueError("--check requires a real/raw file configuration")
+            tables = load_claims_directory(config)
+            result = {"status": "RAW_CONTRACT_VALID", "rows": {k: len(v) for k, v in tables.items()}}
+        else:
+            result = run_delivery(config, mode=args.mode, model_artifact=args.model_artifact)
+    except (ValueError, FileNotFoundError) as exc:
+        print(str(exc))
+        return 2
+    finally:
+        if session is not None:
+            session.close()
     print(json.dumps(result, indent=2))
     return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

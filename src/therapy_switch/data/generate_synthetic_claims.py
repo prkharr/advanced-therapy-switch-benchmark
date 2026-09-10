@@ -10,6 +10,8 @@ from ._config import config_value, therapy_definition, timeline_days
 
 def generate_synthetic_claims(config=None):
     config = config or {}
+    if config_value(config, "data.kind") == "real":
+        raise ValueError("Real-data configuration cannot generate synthetic claims")
 
     def option(key, default):
         return config_value(config, key, f"data.synthetic.{key}", default=default)

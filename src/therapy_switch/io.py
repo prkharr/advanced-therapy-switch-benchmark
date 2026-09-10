@@ -7,6 +7,7 @@ column renames; modeling code only sees canonical fields.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -36,8 +37,40 @@ def _read_frame(path: Path, file_format: str) -> pd.DataFrame:
     raise ValueError(f"Unsupported file_format={file_format!r}; expected 'csv' or 'parquet'.")
 
 
-def load_claims_directory(config: Mapping[str, Any]) -> Dict[str, pd.DataFrame]:
-    """Load and canonicalize the four claims input tables.
+def verify_export_manifest(config):
+    """Reject failed exports and verify real extract identity and file hashes."""
+    data = config["data"]
+    directory = Path(data["input_dir"])
+    path = directory / "export_manifest.json"
+    required = data.get("require_export_manifest", False)
+    if not path.exists():
+        if required:
+            raise ValueError("A completed export_manifest.json is required in the raw folder")
+        return None
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest.get("status") != "COMPLETED":
+        raise ValueError("Raw export is incomplete or failed; use a completed extract")
+    if required:
+        if manifest.get("data_kind") != "real":
+            raise ValueError("Real-data mode requires an export identified as real")
+        if str(manifest.get("extract_as_of_date")) != str(data["as_of_date"]):
+            raise ValueError("Raw export as-of date does not match the configuration")
+        if manifest.get("extract_version") != data.get("extract_version"):
+            raise ValueError("Raw export version does not match the configuration")
+        if data.get("tables"):
+            raise ValueError("Verified raw exports use canonical filenames and columns")
+        for name in CANONICAL_SCHEMAS:
+            digest = hashlib.sha256()
+            with (directory / f"{name}.csv").open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != manifest.get("tables", {}).get(name, {}).get("sha256"):
+                raise ValueError(f"Raw file {name}.csv changed after export; re-extract")
+    return manifest
+
+
+def load_claims_directory(config: Mapping[str, Any], *, check_export=True) -> Dict[str, pd.DataFrame]:
+    """Load and canonicalize the seven claims input tables.
 
     Optional configuration::
 
@@ -49,6 +82,8 @@ def load_claims_directory(config: Mapping[str, Any]) -> Dict[str, pd.DataFrame]:
     """
 
     data_config = config["data"]
+    if check_export:
+        verify_export_manifest(config)
     input_dir = Path(data_config["input_dir"])
     file_format = str(data_config.get("file_format", "parquet")).lower()
     extension = ".csv" if file_format == "csv" else ".parquet"

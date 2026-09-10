@@ -1,129 +1,170 @@
-# Snowflake to raw folder to HCP delivery
+# Actual Snowflake data to raw CSVs and HCP delivery
 
-The pipeline consumes seven canonical CSVs from one raw-data folder. Extraction
-is separate from model training, so source SQL can change while the remaining
-workflow stays the same. The model can change through the existing recipe/trainer.
+The main script now defaults to `configs/private/delivery.yaml`. It never falls
+back to the synthetic demo. The workflow is:
 
 ```text
-Reviewed, consistently versioned Snowflake source queries
-    -> export_raw_data.py
-    -> data/raw/EXTRACT_ID/{seven CSVs + export_manifest.json}
-    -> run_pipeline.py --raw-dir data/raw/EXTRACT_ID
-    -> HCP CSV + offline HTML report + model and audit artifacts
+Reviewed Snowflake SELECTs -> data/raw/EXTRACT_ID/*.csv
+-> validated raw contract -> historical training and current scoring
+-> top 10% eligible patients -> HCP CSV and offline HTML
 ```
 
-## 1. Establish source mappings
+## 1. Initialize once
 
-Use `sql/raw_extract/` as templates. Copy the seven SQL files into an ignored
-directory such as `configs/private/sql/`. Replace the `{{...}}` placeholders with
-reviewed canonical views, or replace each SELECT with your reviewed source query
-that returns the same canonical columns. Templates intentionally do not guess
-claim-availability timestamps, treatment classes, diagnosis codes or statuses.
-
-The views/queries must already restrict patients and dates consistently. Do not
-export an entire claims warehouse. Extract a common cohort across all seven
-tables, preserve all required patient history, and retain the provider/plan
-references and effective therapy mappings used by the claims. Historical HCP
-features are measured within the exported population unless separately prepared
-from an approved broader population; document that scope.
-
-Use one frozen extract/version or equivalent time-consistent reads. Running seven
-queries on changing LATEST views does not itself establish a consistent snapshot.
-Training extracts need outcomes through the approved horizon/runout and sufficient
-observation/enrollment. Do not prefilter outcomes to only successful switchers.
-
-Medical events can contain several diagnosis codes in a single source field.
-The canonical medical adapter expects one diagnosis code per record. Review the
-delimiter and event grain before splitting: assign unique line/code keys, avoid
-duplicating the same procedure across exploded diagnosis rows, and understand
-that diagnosis-count-based visit features are proxies rather than encounter counts.
-An existing prepared-input adapter may be preferable for a richer event schema.
-
-Keep IDs/NDCs as strings. Preserve leading zeros, code-system/version metadata
-upstream, effective mappings, paid/rejected/reversed semantics and actual
-analytical availability. Do not set available_date equal to service date as a
-substitute for missing history. See `docs/data_contract.md` and the workbook.
-
-## 2. Prepare the delivery configuration
-
-Copy `configs/delivery_files.yaml` to `configs/private/delivery.yaml`. Because
-paths resolve relative to the YAML, change `benchmark_config` to `../default.yaml`,
-the model recipe to `../field_model.json`, and output/artifact directories to
-`../../outputs/client_delivery` and `../../artifacts/client_delivery`.
-
-Set the actual extraction as-of date, scoring date, historical index calendar,
-reviewed diagnosis/product definitions, lag/runout, coverage rules and specialties
-through `overrides`. Set `delivery.data_scope` to the actual source description.
-The shipped dates and SYN codes are demonstration assumptions and must be replaced.
-The maximum service date is not the extraction as-of date or proof of claim latency.
-
-## 3. Export using an authenticated session
-
-Install in your approved Python environment:
+From the cloned repository in your approved Python environment:
 
 ```sh
-python -m pip install -e ".[snowflake,deep-learning]"
+python -m pip install -e ".[snowflake,benchmark]"
+python setup_real_data.py
 ```
 
-In the same Python process as an existing authenticated Snowpark session:
+This creates the files below without replacing existing edits:
 
-```python
-from therapy_switch.delivery.pipeline import load_delivery_config, run_delivery
-from therapy_switch.delivery.raw_export import export_raw_data
+| File | What to enter |
+| --- | --- |
+| `configs/private/benchmark.yaml` | Actual extract date/version, historical calendar, cohort and therapy rules, source definitions |
+| `configs/private/delivery.yaml` | Actual scoring date, HCP specialties, named connection, model recipe and output paths |
+| `configs/private/sql/*.sql` | Seven reviewed SELECT queries returning canonical columns |
 
-config = load_delivery_config("configs/private/delivery.yaml")
-export = export_raw_data(session, config, "configs/private/sql", "data/raw")
-config["data"].update(source="files", input_dir=export["raw_dir"], file_format="csv")
-result = run_delivery(config, mode="train-score")
-print(result["hcp_csv"])
-print(result["html_report"])
-```
+There are no synthetic diagnosis/drug codes in the real-data template. Null dates
+and rules deliberately require actual definitions. Empty symptom/comorbidity code
+lists disable those optional groups until mapped; they are not approved code lists.
+The `conventional` and `advanced` class labels must match the approved effective-dated
+therapy dictionary; neither label is inferred from generic/brand status.
 
-Alternatively, if your environment has an approved named Snowflake connection:
+`source_definitions` records the source SQL/version and meaning of cohort, target,
+claim availability, status, observation coverage, product mapping and diagnosis
+normalization. Describe the actual implementation; these fields are not substitutes
+for reviewing the source logic. `data.extract_version` identifies one consistent
+source release, not merely the date when Python ran.
+
+Keep history long enough for the earliest assessment and all coverage rules. The
+historical index end plus outcome horizon/runout must precede the scoring date.
+The scoring date must not exceed the extraction as-of date. Do not substitute the
+maximum service date for analytical availability or observation completeness.
+
+## 2. Inspect source columns and finish SQL mappings
+
+Use the database/schema already identified in your environment:
 
 ```sh
-python export_raw_data.py --config configs/private/delivery.yaml --sql-dir configs/private/sql --connection-name YOUR_APPROVED_CONNECTION --output-dir data/raw
-python run_pipeline.py --config configs/private/delivery.yaml --raw-dir data/raw/EXTRACT_ID
+python inspect_snowflake.py --connection-name YOUR_CONNECTION --database YOUR_DATABASE --schema YOUR_SCHEMA
 ```
 
-Replace EXTRACT_ID with the completed export directory printed by the exporter.
-The terminal does not inherit an authenticated session from a separate notebook.
-The exporter uses Snowflake's documented named-connection and batch-download APIs:
-[creating sessions](https://docs.snowflake.com/en/developer-guide/snowpark/python/creating-session),
-[batch downloads](https://docs.snowflake.com/en/developer-guide/snowpark/reference/python/latest/snowpark/api/snowflake.snowpark.DataFrame.to_pandas_batches).
+This exports metadata only to `configs/private/discovery/source_columns.csv`.
+It looks for the seven LATEST source families already discussed. Missing results
+can mean a different object name or insufficient metadata visibility. The command
+uses documented [Snowpark SQL parameter binding](https://docs.snowflake.com/en/developer-guide/snowpark/reference/python/latest/snowpark/api/snowflake.snowpark.Session.sql).
 
-SQL SELECT statements return data. They cannot directly write to an arbitrary
-folder on your computer. This Python bridge executes the seven SELECTs and writes
-the local CSVs. A SQL-only warehouse unload writes to a stage; downloading from
-that stage requires a supported client. A separate example is supplied at
-`sql/snowflake_stage_export.sql`.
+`sql/raw_extract/` supports already-canonical, cohort/date-filtered views.
+`sql/source_extract/` supplies medical/pharmacy mapping scaffolds using known source
+columns. See its README before substituting these for the private queries. Resolve
+every placeholder. Demographics, enrollment, provider and plan mappings still need
+exact source fields; the code does not invent them.
 
-## 4. What export validation means
+The seven required output files are patients, medical_claims, pharmacy_claims,
+providers, plans, enrollment and therapy_mapping, each with a `.csv` extension.
+See [the data contract](data_contract.md). All pharmacy records require one effective
+mapping, including an explicit other/non-target class where appropriate. Do not
+silently drop rejected/reversed or non-target records to make joins pass.
 
-Each export has a unique folder and a RUNNING, COMPLETED or FAILED manifest.
-Columns are normalized to lowercase; files contain one header and no dataframe
-index. Per-table row counts, file hashes and SQL hashes are recorded. All seven
-files pass the canonical data checks before export completion. The pipeline
-rejects an export whose manifest is not COMPLETED.
+Filter all queries to a common approved patient population and appropriate history
+and outcome dates. Include nonswitchers. Do not download the entire claims warehouse.
+Reference tables must cover every non-null provider/plan key in the extract. HCP
+historical features reflect the exported population unless prepared upstream from
+an explicitly documented broader population.
 
-The default ceiling is 1,000,000 rows per table. An extra-row probe rejects larger
-results instead of silently training on a truncated sample. Downloads are batched,
-but final validation, feature preparation and model fitting are local-memory
-operations. Increase the ceiling only after sizing the environment; for larger
-data prepare upstream and use the prepared/custom adapter contract.
+Use consistent frozen sources or reviewed point-in-time reconstruction. Independent
+reads of changing LATEST views do not guarantee a consistent extract. Preserve
+identifier/NDC strings, diagnosis code-system versions, historical availability and
+reversal timing. Do not invent availability from service date or observation from
+first/last claims.
 
-Structural validation cannot prove that the cohort, feature timing, product
-mapping or clinical definitions are correct. Those require source-logic review.
-The actual source session and real-data model performance remain unverified.
+## 3. Check and run
 
-## 5. Reuse the fitted model
-
-After training on actual historical data, score a compatible later completed extract:
+Validate configuration and query placeholders without connecting or training:
 
 ```sh
-python run_pipeline.py --config configs/private/delivery.yaml --raw-dir data/raw/NEW_EXTRACT_ID --mode score --model-artifact artifacts/client_delivery/TRAIN_RUN_ID/model.joblib
+python run_pipeline.py --check --extract
 ```
 
-Do not use a synthetic-trained artifact for client targeting. Change the feature
-contract version and refit when feature meaning or cohort rules change. Raw data,
-populated connection configuration and fitted artifacts remain ignored by Git.
+When it reports `CONFIGURATION_READY`, export and run the complete pipeline:
+
+```sh
+python run_pipeline.py --extract
+```
+
+Set `extraction.connection_name` once or pass `--connection-name YOUR_CONNECTION`.
+The script opens one session, writes seven CSVs, validates the export and processes
+that exact folder. The session is closed after completion or failure.
+
+To process an existing export instead:
+
+```sh
+python run_pipeline.py --raw-dir data/raw/EXTRACT_ID --check
+python run_pipeline.py --raw-dir data/raw/EXTRACT_ID
+```
+
+`--check` on files validates the manifest, hashes and raw schema; it does not establish
+cohort correctness, model performance or HCP actionability. The default input path
+is a placeholder location; use the exact EXTRACT_ID printed by the exporter.
+
+The completed run prints `raw_csv_dir`, `hcp_csv`, `html_report` and `model_artifact`.
+HCP CSV and offline HTML go to `outputs/client_delivery/RUN_ID/`; patient-level
+intermediates and models go to `artifacts/client_delivery/RUN_ID/`. Configure approved
+access permissions for these locations. Open `client_report.html` directly in a browser.
+
+For extraction only, the existing standalone bridge remains available:
+
+```sh
+python export_raw_data.py --config configs/private/delivery.yaml --sql-dir configs/private/sql --connection-name YOUR_CONNECTION --output-dir data/raw
+```
+
+In a notebook with an already-authenticated `session`, call `export_raw_data(session,
+config, sql_dir, output_dir)`, assign its returned `raw_dir` to `config["data"]["input_dir"]`,
+then call `run_delivery(config)`. Load `config` with `load_delivery_config` first.
+A notebook session is not inherited by a separate terminal process.
+
+## 4. Compare models and score later extracts
+
+The existing benchmark now accepts the same real-data configuration and CSV folder:
+
+```sh
+therapy-switch validate-data --config configs/private/benchmark.yaml --raw-dir data/raw/EXTRACT_ID
+therapy-switch run --config configs/private/benchmark.yaml --raw-dir data/raw/EXTRACT_ID
+```
+
+The delivery model recipe remains replaceable in `delivery.model.recipe`; source SQL,
+features and trainers keep the same interfaces. The shipped neural recipe is an
+experimental starting candidate, not a demonstrated real-data winner. Train and compare
+on actual mature data before selecting a final model. Model selection should preserve
+an untouched test period and the agreed top-10% capacity.
+
+For a subsequent compatible extract:
+
+```sh
+python run_pipeline.py --raw-dir data/raw/NEW_EXTRACT_ID --mode score --model-artifact artifacts/client_delivery/TRAIN_RUN_ID/model.joblib
+```
+
+Update the private extract date/version and scoring date for that extract. Real mode
+rejects synthetic or legacy models without real-training provenance, as well as changed
+feature/cohort/timing/source definitions. Refit when those meanings change.
+
+## 5. Export boundaries and migration
+
+Exports use unique folders and RUNNING/COMPLETED/FAILED manifests. Real mode verifies
+completion, declared source kind, extract version/as-of date and every CSV hash.
+The default ceiling is 1,000,000 rows per table; oversize results fail instead of being
+silently truncated. Downloads are batched, but preparation/training remain local-memory
+operations. Larger data need upstream preparation or a replacement adapter.
+
+The older file config no longer inherits synthetic defaults. Initialize the new private
+configuration and move reviewed settings into it. Existing unverified raw exports need
+re-export with the real configuration to establish the manifest. A stage/GET download
+alone does not establish this manifest; the SQL stage example is an alternative transport,
+not a drop-in verified export. The main bridge is the supported path for this setup.
+
+Synthetic generators and research examples remain explicit engineering utilities and
+reject real-mode configuration. Run a demo only with `--config configs/delivery_demo.yaml`.
+Private configurations, metadata extracts, raw CSVs and trained artifacts are ignored by Git.
+Actual warehouse execution and client-model results have not been verified here.
