@@ -17,7 +17,15 @@ The default generates 1,200 synthetic patients and 100 synthetic HCPs, with an a
 
 The demo also saves all seven generated raw tables as CSV files in `data/synthetic/raw/RUN_ID/`: patients, medical_claims, pharmacy_claims, providers, plans, enrollment and therapy_mapping. The completion JSON prints their absolute directory as `raw_csv_dir`, and the run manifest records it in input provenance. Each run has its own directory, so earlier extracts are preserved. These generated files are ignored by Git. Change `delivery.synthetic_csv_dir` to relocate them (relative to the delivery YAML), or remove that setting to disable saving. This option only exports synthetic data; file and Snowflake sources do not create raw CSV copies.
 
-Equivalent installed command:
+To generate just the seven raw CSV files without running model training or scoring:
+
+~~~sh
+python generate_synthetic_claims.py --patients 1200 --seed 42
+~~~
+
+This standalone repository script uses the demo configuration and prints the new directory under `data/synthetic/raw/RUN_ID/`. Use `--output-dir` to change the parent directory or `--config` to supply another synthetic delivery configuration. A `generation_manifest.json` records completion, the seed and row counts. Core dependencies are sufficient: `python -m pip install -e .`.
+
+To run the complete pipeline through the installed command:
 
 ~~~sh
 therapy-switch-deliver --config configs/delivery_demo.yaml
