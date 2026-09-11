@@ -50,7 +50,7 @@ def verify_export_manifest(config):
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if manifest.get("status") != "COMPLETED":
         raise ValueError("Raw export is incomplete or failed; use a completed extract")
-    if required:
+    if required or data.get("kind") == "real":
         if manifest.get("data_kind") != "real":
             raise ValueError("Real-data mode requires an export identified as real")
         if str(manifest.get("extract_as_of_date")) != str(data["as_of_date"]):
@@ -115,11 +115,7 @@ def load_claims_directory(config: Mapping[str, Any], *, check_export=True) -> Di
 def save_claims_directory(
     tables: Mapping[str, pd.DataFrame], directory: str | Path, file_format: str = "csv"
 ) -> None:
-    """Persist canonical tables for development only.
-
-    Production claims should remain in governed storage; this helper is mainly
-    intended for synthetic datasets and integration fixtures.
-    """
+    """Persist validated canonical tables to an approved local folder."""
 
     validate_tables(tables)
     target = Path(directory)

@@ -74,8 +74,8 @@ def build_cohort(tables, config=None, *, labelled=True):
     followup_min = max(horizon, int(timeline.get("minimum_followup_days", horizon)))
     coverage_window = int(settings.get("coverage_window_days", 270))
     coverage_min = int(settings.get("minimum_covered_days", 135))
-    diagnosis_codes = settings.get("diagnosis_codes", ["SYN_NT1"])
-    confirm_codes = settings.get("confirmation_codes", ["SYN_NT1", "SYN_NT2", "SYN_IH"])
+    diagnosis_codes = settings["diagnosis_codes"]
+    confirm_codes = settings["confirmation_codes"]
     separation = int(settings.get("diagnosis_separation_days", 90))
     therapy = therapy_definition(config)
     patients = tables["patients"].set_index("patient_id")
@@ -165,7 +165,7 @@ def build_cohort(tables, config=None, *, labelled=True):
             {
                 "snapshot_id": sid,
                 "patient_id": pid,
-                "cohort_id": settings.get("cohort_id", "SYN_NT1"),
+                "cohort_id": settings["cohort_id"],
                 "start_dt": first_fill,
                 "index_date": index,
                 "feature_cutoff": index - pd.Timedelta(days=lag),

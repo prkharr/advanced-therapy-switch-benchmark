@@ -30,7 +30,7 @@ def read_export_queries(sql_dir):
     return queries
 
 
-def export_raw_data(session, config, sql_dir, output_dir="data/raw", *, max_rows=1_000_000):
+def export_raw_data(session, config, sql_dir, output_dir="actual_raw_data", *, max_rows=1_000_000):
     """Export consistently versioned canonical SELECTs, then validate all seven files."""
     from therapy_switch.real_data import validate_real_data
 
@@ -100,7 +100,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="Reviewed delivery YAML")
     parser.add_argument("--sql-dir", required=True, help="Directory of seven reviewed SELECT files")
-    parser.add_argument("--output-dir", default="data/raw")
+    parser.add_argument("--output-dir", default="actual_raw_data")
     parser.add_argument("--max-rows", type=int, default=1_000_000)
     parser.add_argument("--connection-name", required=True, help="Existing approved named connection")
     args = parser.parse_args(argv)

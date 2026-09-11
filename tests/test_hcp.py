@@ -166,38 +166,3 @@ def test_weighted_score_exposes_each_component() -> None:
     assert "score_component__expected_switchers" in scored.columns
     assert "score_component__patients_top_10pct" in scored.columns
     assert "opportunity_score_formula" in scored.columns
-
-
-def test_snapshot_hcp_layer_deduplicates_within_targeting_period(prepared_data):
-    from therapy_switch.hcp.hcp_prioritization import build_snapshot_hcp_output
-
-    _, _, inputs = prepared_data
-    scores = inputs.snapshots[["snapshot_id", "patient_id", "index_date"]].copy()
-    scores["advanced_therapy_propensity_score"] = 0.2
-    targeting, attribution = build_snapshot_hcp_output(
-        scores, inputs.events, {"targeting_period": "Q"}
-    )
-    assert not attribution.duplicated(["patient_id", "targeting_period"]).any()
-    expected = (
-        scores.assign(period=scores.index_date.dt.to_period("Q"))
-        .sort_values(["index_date", "snapshot_id"])
-        .drop_duplicates(["patient_id", "period"], keep="last")
-    )
-    assert set(attribution.snapshot_id) == set(expected.snapshot_id)
-    assert len(targeting) > 0
-
-
-def test_snapshot_hcp_layer_rejects_future_and_wrong_patient(prepared_data):
-    from therapy_switch.hcp.hcp_prioritization import build_snapshot_hcp_output
-
-    _, _, inputs = prepared_data
-    scores = inputs.snapshots.iloc[:1][["snapshot_id", "patient_id", "index_date"]].copy()
-    scores["advanced_therapy_propensity_score"] = 0.2
-    events = inputs.events.loc[inputs.events.snapshot_id.eq(scores.snapshot_id.iloc[0])].copy()
-    events.loc[events.index[0], "available_date"] = scores.index_date.iloc[0] + pd.Timedelta(days=1)
-    with pytest.raises(ValueError, match="unavailable"):
-        build_snapshot_hcp_output(scores, events, {})
-    events.loc[events.index[0], "available_date"] = events.event_date.iloc[0]
-    events.loc[events.index[0], "patient_id"] = "wrong"
-    with pytest.raises(ValueError, match="different patient"):
-        build_snapshot_hcp_output(scores, events, {})

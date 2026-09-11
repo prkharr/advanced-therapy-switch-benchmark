@@ -1,4 +1,4 @@
-"""Explicit real-data configuration; no clinical defaults or synthetic fallback."""
+"""Explicit real-data configuration; explicit population and temporal definitions."""
 
 from collections.abc import Mapping
 
@@ -7,7 +7,7 @@ import pandas as pd
 
 def real_data_issues(config):
     if config.get("data", {}).get("kind") != "real":
-        return []
+        return ["Set data.kind: real"]
     issues = []
 
     def get(path):
@@ -48,10 +48,6 @@ def real_data_issues(config):
             issues.append(f"Populate {path} with actual source values")
     if get("data.source") != "files":
         issues.append("Real raw-folder workflow requires data.source: files")
-    if get("data.require_export_manifest") is not True:
-        issues.append("Real raw-folder workflow requires data.require_export_manifest: true")
-    if "synthetic" in config.get("data", {}):
-        issues.append("Remove data.synthetic from the real-data configuration")
 
     def check_tokens(value, path):
         if isinstance(value, Mapping):

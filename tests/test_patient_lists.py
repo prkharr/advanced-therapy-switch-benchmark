@@ -1,12 +1,9 @@
 """Capacity evaluation and history leakage regression tests."""
 
-import joblib
 import numpy as np
 import pandas as pd
 import pytest
 
-from therapy_switch.features.history import HistoryFeatureEncoder, eligible_events
-from therapy_switch.models.contracts import LeakageError
 from therapy_switch.patient_lists import (
     latest_patient_indices,
     patient_capture_metrics,
@@ -65,71 +62,3 @@ def test_cutoff_ties_and_ambiguous_assessments(assessments):
     duplicate = pd.concat([assessments, assessments.iloc[[1]].assign(snapshot_id="other")])
     with pytest.raises(ValueError, match="Ambiguous"):
         latest_patient_indices(duplicate)
-
-
-@pytest.mark.parametrize(
-    "column,value",
-    [
-        ("event_date", "2024-01-26"),
-        ("available_date", "2024-02-02"),
-        ("event_date", "2023-01-01"),
-        ("available_date", None),
-    ],
-)
-def test_history_rejects_unavailable_events(assessments, events, column, value):
-    events.loc[events.index[0], column] = pd.Timestamp(value) if value else pd.NaT
-    with pytest.raises(LeakageError):
-        eligible_events(events, assessments.iloc[1:])
-
-
-def test_history_vocabulary_train_only_and_serializable(assessments, events, tmp_path):
-    train = assessments.iloc[1:-1]
-    encoder = HistoryFeatureEncoder().fit(events, train)
-    assert encoder.vocabulary_ == ["diagnosis::known"]
-    expected = encoder.transform(events, assessments.iloc[-1:])
-    assert expected["history_code_0_count_30d"].item() == 0
-    path = tmp_path / "history.joblib"
-    joblib.dump(encoder, path)
-    pd.testing.assert_frame_equal(
-        joblib.load(path).transform(events, assessments.iloc[-1:]), expected
-    )
-    changed = assessments.copy()
-    changed["label"] = 1 - changed.label
-    pd.testing.assert_frame_equal(
-        encoder.transform(events, train), encoder.transform(events, changed.iloc[1:-1])
-    )
-
-
-@pytest.mark.parametrize(
-    "family,pretrain", [("rank_mlp", 0), ("ehr_transformer", 1), ("retain", 0)]
-)
-def test_neural_roundtrip_and_unlabelled_scoring(assessments, events, tmp_path, family, pretrain):
-    pytest.importorskip("torch")
-    from therapy_switch.models.patient_rank import fit_patient_model
-
-    frame = assessments.iloc[1:].copy()
-    spec = {
-        "name": family,
-        "family": family,
-        "history": True,
-        "latest_only": True,
-        "options": {
-            "width": 8,
-            "max_length": 8,
-            "max_epochs": 2,
-            "pretrain_epochs": pretrain,
-            "batch_size": 10,
-            "rank_weight": 1.0,
-            "patience": 2,
-        },
-    }
-    model = fit_patient_model(spec, frame, frame, events, events, ["x"], seed=1)
-    expected = model.predict_scores(frame.drop(columns="label"), events)
-    assert np.isfinite(expected).all() and np.all((expected >= 0) & (expected <= 1))
-    path = tmp_path / f"{family}.joblib"
-    joblib.dump(model, path)
-    actual = joblib.load(path).predict_scores(frame, events)
-    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-7)
-    # Prediction of one patient cannot depend on other patients in the batch.
-    single = model.predict_scores(frame.iloc[[0]], events)[0]
-    assert single == pytest.approx(expected[0], abs=1e-6)

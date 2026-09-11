@@ -30,7 +30,7 @@ from therapy_switch.patient_lists import (
     patient_capture_metrics,
     rank_patients,
 )
-from therapy_switch.research import source_fingerprint
+from therapy_switch.provenance import runtime_versions, source_fingerprint
 
 from .contracts import resolve_callable
 from .targeting import build_field_targets, csv_safe
@@ -131,7 +131,7 @@ def load_delivery_config(path, *, overrides=None):
         raise ValueError("Invalid HCP tier or minimum-patient settings")
     # Every delivery-config path is relative to that config file, independent of cwd.
     for owner, keys in [
-        (delivery, ["output_dir", "artifact_dir", "model_artifact", "synthetic_csv_dir"]),
+        (delivery, ["output_dir", "artifact_dir", "model_artifact"]),
         (delivery.get("model", {}), ["recipe"]),
         (delivery.get("prepared", {}), ["training_dir", "scoring_dir"]),
     ]:
@@ -196,7 +196,8 @@ def _train_model(inputs, config, artifact_directory):
         for a, b in [("train", "validation"), ("train", "test"), ("validation", "test")]
     ):
         raise ValueError("Historical partitions must be patient-disjoint")
-    settings = config["delivery"]["model"]
+    settings = copy.deepcopy(config["delivery"]["model"])
+    settings["patient_fraction"] = config["delivery"].get("patient_fraction", 0.1)
     trainer = resolve_callable(settings["trainer"])
     train, val = splits["train"], splits["validation"]
     train_events = training.events.loc[training.events.snapshot_id.isin(train.snapshot_id)]
@@ -230,7 +231,7 @@ def _train_model(inputs, config, artifact_directory):
         recipe_hash,
         settings["trainer"],
         input_policy_hash(config),
-        config["data"].get("kind", "synthetic" if config["data"]["source"] == "synthetic" else "unverified"),
+        config["data"]["kind"],
     )
     path = artifact_directory / "model.joblib"
     joblib.dump(model, path)
@@ -246,7 +247,11 @@ def _train_model(inputs, config, artifact_directory):
         "training_seconds": perf_counter() - started,
         "reload_verified": True,
         "split_counts": {},
-        "model_selection": "fixed configured recipe; historical test does not select models",
+        "model_selection": "validation recall at capacity, then average precision; test is held out",
+        "runtime_versions": runtime_versions(),
+        "selected_baseline": getattr(estimator, "selected_name", None),
+        "baseline_parameters": getattr(estimator, "parameters", {}),
+        "baseline_comparison": {},
         "historical_metrics": {},
     }
     for split, part in splits.items():
@@ -273,13 +278,28 @@ def _train_model(inputs, config, artifact_directory):
                 "status": "not_estimable",
                 "reason": "Latest patient assessments require both outcome classes",
             }
+    for name, candidate in getattr(estimator, "candidates", {}).items():
+        audit["baseline_comparison"][name] = {}
+        for split in ("validation", "test"):
+            part = splits[split]
+            scores = candidate.predict_proba(part[list(features)])[:, 1]
+            if part.iloc[latest_patient_indices(part)].label.nunique() == 2:
+                audit["baseline_comparison"][name][split] = patient_capture_metrics(
+                    part, scores, fraction=config["delivery"].get("patient_fraction", 0.1)
+                )
+            else:
+                audit["baseline_comparison"][name][split] = {"status": "not_estimable"}
+    comparison_rows = [dict(model=name, split=split, **metrics)
+                       for name, parts in audit["baseline_comparison"].items()
+                       for split, metrics in parts.items()]
+    pd.DataFrame(comparison_rows).to_csv(artifact_directory / "baseline_comparison.csv", index=False)
     write_json(audit, artifact_directory / "training_audit.json")
     return model, path, audit
 
 
 def run_delivery(config, *, mode="train-score", model_artifact=None, session=None):
     """Acquire -> prepare -> fit/load -> score -> attribute -> CSV/HTML; no external publishing."""
-    from .report import write_client_report
+    from .report import write_field_report
 
     if mode not in {"train-score", "score"}:
         raise ValueError("Mode must be train-score or score")
@@ -287,8 +307,6 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
     validate_real_delivery(config)
     settings = config["delivery"]
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8]
-    if config["data"]["source"] == "synthetic" and settings.get("synthetic_csv_dir"):
-        settings["synthetic_csv_dir"] = str(Path(settings["synthetic_csv_dir"]) / run_id)
     output = Path(settings["output_dir"]) / run_id
     artifacts = Path(settings["artifact_dir"]) / run_id
     output.mkdir(parents=True, exist_ok=False)
@@ -322,6 +340,7 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
             session=session,
         )
         inputs.scoring.validate(settings["scoring_date"])
+        write_json(inputs.provenance.get("raw_profile", {}), artifacts / "raw_profile.json")
         snapshots = inputs.scoring.snapshots
         lag = pd.Timedelta(days=int(config["timeline"].get("claims_lag_days", 0)))
         lookback = pd.Timedelta(days=int(config["timeline"]["observation_window_days"]))
@@ -402,7 +421,7 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
             output_columns=list(targets),
             patient_data_location="restricted artifact directory",
         )
-        write_client_report(targets, coverage, manifest, output / "client_report.html")
+        write_field_report(targets, coverage, manifest, output / "field_report.html")
         write_json(manifest, artifacts / "run_manifest.json")
         return {
             "status": "COMPLETED",
@@ -411,7 +430,7 @@ def run_delivery(config, *, mode="train-score", model_artifact=None, session=Non
             "eligible_patients": len(patients),
             "priority_patients": int(patients.selected.sum()),
             "hcp_csv": str(csv_path.resolve()),
-            "html_report": str((output / "client_report.html").resolve()),
+            "html_report": str((output / "field_report.html").resolve()),
             "model_artifact": str(model_path.resolve()),
             "manifest": str((artifacts / "run_manifest.json").resolve()),
             "raw_csv_dir": inputs.provenance.get("raw_csv_dir"),
@@ -477,8 +496,14 @@ def main(argv=None):
 
             if config["data"]["source"] != "files":
                 raise ValueError("--check requires a real/raw file configuration")
-            tables = load_claims_directory(config)
-            result = {"status": "RAW_CONTRACT_VALID", "rows": {k: len(v) for k, v in tables.items()}}
+            from therapy_switch.data.raw_source_adapter import canonicalize_raw_tables
+
+            tables = canonicalize_raw_tables(load_claims_directory(config), config)
+            from therapy_switch.profiling import save_profile
+
+            report = save_profile(tables, Path(config["delivery"]["artifact_dir"]) / "input_check")
+            result = {"status": "RAW_CONTRACT_VALID", "rows": {k: len(v) for k, v in tables.items()},
+                      "evidence_file": str(report.resolve())}
         else:
             result = run_delivery(config, mode=args.mode, model_artifact=args.model_artifact)
     except (ValueError, FileNotFoundError) as exc:

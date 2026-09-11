@@ -113,11 +113,10 @@ def therapy_definition(config: Any) -> TherapyDefinition:
             drug_ids: [ADV_A]
             therapy_classes: [advanced]
 
-    Generic synthetic defaults are provided so the example pipeline can run from
-    scratch. Production mappings should always be supplied by configuration.
+    Therapy mappings must be supplied explicitly in configuration.
     """
 
-    def resolve(arm: str, default_drugs: tuple[str, ...], default_class: str) -> tuple:
+    def resolve(arm: str) -> tuple:
         section = _mapping_section(config, arm)
         if isinstance(section, Mapping):
             drug_ids = as_tuple(section.get("drug_ids", section.get("drugs")))
@@ -128,15 +127,7 @@ def therapy_definition(config: Any) -> TherapyDefinition:
             drug_ids = as_tuple(section)
             classes = ()
         else:
-            drug_ids = as_tuple(
-                config_value(
-                    config,
-                    f"{arm}_drug_ids",
-                    f"therapy_mapping.{arm}_drug_ids",
-                    default=default_drugs,
-                )
-            )
-            classes = ()
+            raise ValueError(f"Explicit therapy_mapping.{arm} is required")
 
         explicit_classes = as_tuple(
             config_value(
@@ -148,14 +139,10 @@ def therapy_definition(config: Any) -> TherapyDefinition:
         )
         if explicit_classes:
             classes = explicit_classes
-        if section is None and not classes:
-            classes = (default_class,)
         return drug_ids, classes
 
-    conventional_ids, conventional_classes = resolve(
-        "conventional", ("SYN_CONV_A", "SYN_CONV_B", "SYN_CONV_C"), "conventional"
-    )
-    advanced_ids, advanced_classes = resolve("advanced", ("SYN_ADV_A", "SYN_ADV_B"), "advanced")
+    conventional_ids, conventional_classes = resolve("conventional")
+    advanced_ids, advanced_classes = resolve("advanced")
     overlap = set(conventional_ids) & set(advanced_ids)
     if overlap:
         raise ValueError(f"Therapy drug mappings overlap: {sorted(overlap)}")

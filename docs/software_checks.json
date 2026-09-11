@@ -1,0 +1,21 @@
+{
+  "checked_at_utc": "2026-09-11T06:17:24.437442+00:00",
+  "scope": "Local software verification; no warehouse execution or empirical model result",
+  "source_fingerprint": "e223e5de16bb4c22fd988e7d9324e9883dfa04aeaf712c6ca82d28e7e2d0229b",
+  "runtime_versions": {
+    "pandas": "2.3.3",
+    "numpy": "2.2.6",
+    "scikit-learn": "1.7.2",
+    "lightgbm": "4.7.0",
+    "joblib": "1.6.0"
+  },
+  "checks": {
+    "pytest": "18 passed",
+    "ruff": "passed",
+    "editable_install": "passed",
+    "incomplete_configuration": "correctly rejected",
+    "raw_folder_to_hcp_outputs": "passed with hand-written contract cases"
+  },
+  "warehouse_execution": "pending",
+  "actual_data_performance": "not measured"
+}

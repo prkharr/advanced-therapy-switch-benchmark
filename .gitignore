@@ -15,7 +15,6 @@ build/
 data/raw/
 data/interim/
 data/processed/
-data/synthetic/
 data/prepared/
 data/governed/
 work/
@@ -96,3 +95,11 @@ configs/private/
 *credential*.env
 *credential*.txt
 *credential*.csv
+
+# Downloaded actual inputs are local; retain only the empty directory marker.
+actual_raw_data/*
+!actual_raw_data/.gitkeep
+sql_extraction/private/
+/data/
+# Obsolete workbooks may be recreated by an already-open spreadsheet session.
+docs/implementation_review/

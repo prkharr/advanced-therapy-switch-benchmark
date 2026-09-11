@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 
-def write_client_report(targets, coverage, manifest, path):
+def write_field_report(targets, coverage, manifest, path):
     fields = [
         ("hcp_rank", "Rank"),
         ("hcp_id", "HCP ID"),
@@ -47,7 +47,9 @@ def write_client_report(targets, coverage, manifest, path):
     fraction = manifest["patient_fraction"]
     evidence = manifest["model_evidence"]
     evidence_text = "Experimental candidate — a significant improvement has not been established."
-    if evidence == "reference":
+    if evidence == "independent_baseline":
+        evidence_text = "Independent baseline comparison. Review held-out performance before use."
+    elif evidence == "reference":
         evidence_text = "Reference model — review performance before operational use."
     elif evidence != "experimental":
         evidence_text = f"Model evidence status supplied by the pipeline configuration: {evidence}."

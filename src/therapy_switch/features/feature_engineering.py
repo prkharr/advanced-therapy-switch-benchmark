@@ -126,10 +126,10 @@ def build_tabular_features(tables, cohort, config=None):
         )
         row["coverage_change"] = row["recent_coverage_90d"] - row["previous_coverage_90d"]
         row["symptom_count"] = int(
-            diagnosis.code.isin(settings.get("symptom_codes", ["SYN_SYMPTOM"])).sum()
+            diagnosis.code.isin(settings.get("symptom_codes", [])).sum()
         )
         row["comorbidity_count"] = int(
-            diagnosis.code.isin(settings.get("comorbidity_codes", ["SYN_COMORBID"])).sum()
+            diagnosis.code.isin(settings.get("comorbidity_codes", [])).sum()
         )
         hcp = conventional.iloc[-1].prescriber_id if len(conventional) else None
         hcp_history = hcp_groups.get(hcp, all_rx.iloc[:0])

@@ -22,38 +22,26 @@ Each canonical claim is an immutable line. status is paid, final, rejected or re
 
 Providers, patient attributes and plan dictionaries are treated as static within an extract. Enrollment supplies effective plan intervals; concurrent plans require an approved primary-plan resolution. Real inputs require point-in-time dimension snapshots or upstream effective-date reconstruction. The software cannot establish those semantics from column names.
 
-## Index and cohort construction
+## Independent cohort and target
 
-Supply snapshot_candidates(patient_id, index_date), a patient index_date plus a configured snapshot count, or a monthly calendar using timeline.index_date_start/end. Candidate calendars must be independent of future outcomes. Eligibility applies a fixed extraction as_of_date, observable history, continuous enrollment through follow-up, diagnosis confirmation, conventional coverage and known prior advanced exposure.
+All clinical and timing rules must be explicitly configured. Do not copy labels, eligibility flags, engineered features or scores from an existing model table. Construct the population from raw diagnosis, treatment and observation histories using separately reviewed definitions.
 
-The default synthetic rules are 365 days of history, a 90-day horizon, 7-day service lag, 30-day label runout, two qualifying diagnosis dates more than 90 days apart, and at least 135 covered days in 270. These are configurable engineering assumptions, not approved clinical definitions. require_conventional_on_index is false and maximum_gap_days is unset by default.
+Monthly candidate dates come from `timeline.index_date_start/end`, independent of future outcomes. Eligibility applies history, enrollment, diagnosis confirmation, conventional coverage and known prior advanced exposure. No diagnosis code list, therapy list or clinical time window is assumed. Feature window sizes and missing-value handling are engineering settings that must also be reviewed.
 
-Exposure coverage unions fill intervals [fill_date, fill_date + days_supply) with carry-in clipping and no stockpiling. Windows use inclusive calendar endpoints. Paid/final conventional history must exist even when the configured minimum covered days is zero.
+Exposure coverage unions fill intervals [fill_date, fill_date + days_supply), with clipping and no stockpiling. Paid/final conventional history must exist even if minimum covered days is zero. Features use service_date <= index_date - claims_lag_days and available_date <= index_date. Prior advanced exposure known under those cutoffs excludes a snapshot. Late-arriving prior exposure needs an explicit source-policy review.
 
-Features use service_date <= index_date - claims_lag_days and available_date <= index_date. Known prior advanced exposure under those cutoffs excludes a snapshot. This is an as-known exclusion: late-arriving prior exposure can remain unobserved at index. Real outcome policy must explicitly resolve such cases.
+A positive label requires a valid advanced fill in (index_date, index_date + prediction_window_days], available by prediction_end + label_runout_days. Negative labels require mature observable follow-up. This measures initiation; proving replacement of conventional treatment would require an additional discontinuation rule.
 
-A positive label requires a valid advanced fill in (index_date, index_date + prediction_window_days], available by prediction_end + label_runout_days. Negative labels require the same mature follow-up. Claims arriving after this frozen maturity date do not retroactively change that benchmark label.
+## Coding and source mapping
 
-## Three prepared tables
+NDC/product identifiers are strings. Do not remove leading zeros or blindly pad an ambiguous 10-digit NDC. Preserve the original code and code system in the upstream mapping; normalize only with a verified segment format or reference crosswalk. `therapy_mapping.csv` is an effective-dated product-to-class dictionary, independently reviewed for the study target. Every pharmacy transaction needs one applicable mapping, including an explicit category for unrelated products.
 
-| Input | Required contract |
-|---|---|
-| snapshots | snapshot_id, patient_id, cohort_id, start_dt, index_date, resp, outcome_date, lookback_start, feature_cutoff, prediction_end, label_available_date, eligible, followup_complete |
-| wide | snapshot_id, feature_as_of and exactly the configured feature_columns |
-| events | snapshot_id, patient_id, event_id, event_date, available_date, event_type, code_system, code, hcp_id, product_id, therapy_class, provider_specialty, status |
+Diagnosis normalization must preserve the ICD version and meaning, specify whether matching is exact or prefix based, and resolve multi-code arrays using verified source encoding. Canonical `diagnosis_code` holds one diagnosis per row. When exploding diagnoses, derive a unique line key and retain a procedure only once per original event. Medical activity counts are row-level proxies, not necessarily distinct encounters. Separate claim encounters before deriving encounter-based features if that is the agreed definition.
 
-RESP may be uppercase and becomes resp. label is an internal alias and must agree if supplied. start_dt is the first known qualifying conventional fill; it must not exceed feature_cutoff. Labels are binary; outcome_date is present exactly for positives and strictly within the future window. Every benchmark row must be eligible with complete follow-up, and label_available_date must be mature by data.as_of_date.
+The raw availability, status, observation and mapping semantics must be documented under `source_definitions` and verified against saved query results. An event date alone does not establish when the event became available.
 
-The wide table must align one-to-one with snapshots. Every predictor needs data.feature_lineage with a definition, available_at_index: true and a dtype of numeric or categorical. Datetime, identifier, split and target-like predictors are rejected. Lineage is a required declaration, not automatic proof against a semantically disguised target; upstream feature logic still requires review.
+## Files and evidence
 
-Prepared events must agree with snapshot patient IDs and fit the declared history/cutoff and availability dates. Duplicate event IDs within snapshots fail. HCP/product fields may be blank. Empty event histories are supported. Date-derived ordering, recency and deltas are recalculated after validation. HCP context fields have to be supplied even when blank so attribution behavior is explicit.
+Place the seven canonical CSVs directly in `actual_raw_data/`. Manual downloads do not require an exporter manifest. If an export manifest is present, real-data loading verifies its completion state, as-of date and all file hashes. The Python exporter writes a completed manifest only after all seven files pass validation; failed exports cannot be loaded through that manifest.
 
-The prepared path does not recompute client features or rerun raw cohort engineering. It validates the supplied canonical contract and feeds the common split/train/evaluate workflow. Training vocabulary maps PAD to 0 and unseen values to UNK 1. Both medical code kinds are separate events; sequence truncation retains the latest events using stable event-date/event-ID order.
-
-## Optional Snowpark transport
-
-SnowflakeAdapter accepts an existing session. Explicit use_active_session=True lazily imports get_active_session. It does not build a credential-based connection. Each table read uses limit(max_rows + 1) and rejects oversize extracts. Table identifiers are restricted to unquoted one-, two- or three-part names.
-
-Implementation and mocks are tested. Integration state is IMPLEMENTED / NOT VERIFIED IN SENTINEL. Package availability, session behavior, actual schemas, extract size and datatype compatibility require environment validation.
-
-Official API references: [active session](https://docs.snowflake.com/en/developer-guide/snowpark/reference/python/latest/snowpark/api/snowflake.snowpark.context.get_active_session), [bounded DataFrame limit](https://docs.snowflake.com/en/developer-guide/snowpark/reference/python/latest/snowpark/api/snowflake.snowpark.DataFrame.limit).
+The internal snapshot/wide/event tables are built by this pipeline and validated before fitting. They are not external model inputs. Successful preflight saves aggregate input profiles. A completed model run saves split and performance evidence separately. Source metadata and execution evidence are distinct from software unit checks.
